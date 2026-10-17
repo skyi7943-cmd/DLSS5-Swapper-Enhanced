@@ -1991,3 +1991,86 @@ ipcMain.handle('restore', (event, dir) => exclusiveMutation(async () => {
     return { ok: false, code: err.code, message: err.message };
   }
 }));
+
+// ---------- Enhanced Modules (DLSS 5 Neural Rendering + RTX 40 MFG + Diagnostics) ----------
+const neuralModels = require('./src/core/neural-models');
+const mfgManager = require('./src/core/mfg-manager');
+const combinedManager = require('./src/core/combined-manager');
+
+function resolvePayloadRoot() {
+  for (const dir of [path.join(process.resourcesPath || '', 'payload'), path.join(__dirname, 'payload')]) {
+    if (fs.existsSync(dir)) return dir;
+  }
+  return path.join(__dirname, 'payload');
+}
+
+ipcMain.handle('enhanced-hardware', async (_event, forceRefresh) => {
+  try {
+    return { ok: true, hardware: await combinedManager.detectHardwareEnvironment(forceRefresh === true) };
+  } catch (err) {
+    return { ok: false, message: err.message };
+  }
+});
+
+ipcMain.handle('enhanced-models', async () => {
+  try {
+    const hw = await combinedManager.detectHardwareEnvironment();
+    const models = neuralModels.listNeuralModels({
+      payloadDir: resolvePayloadRoot(),
+      userDataDir: app.getPath('userData'),
+      gpuName: hw.gpu.name
+    });
+    return { ok: true, models, runtimeStacks: neuralModels.RUNTIME_STACKS, unlockers: mfgManager.MFG_UNLOCKERS };
+  } catch (err) {
+    return { ok: false, message: err.message };
+  }
+});
+
+ipcMain.handle('enhanced-import-model', async (_event, filePath, meta) => {
+  try {
+    let targetPath = filePath;
+    if (!targetPath) {
+      const res = await dialog.showOpenDialog(win, {
+        title: '导入合法来源的 DLSS 5 神经渲染模型 (nvngx_dlssnr.dll)',
+        filters: [{ name: 'DLSS 5 Neural Rendering DLL', extensions: ['dll'] }],
+        properties: ['openFile']
+      });
+      if (res.canceled || !res.filePaths.length) return { ok: false, cancelled: true };
+      targetPath = res.filePaths[0];
+    }
+    const record = neuralModels.importNeuralModel(targetPath, app.getPath('userData'), meta || {});
+    const hw = await combinedManager.detectHardwareEnvironment();
+    const compat = neuralModels.evaluateModelGpuCompatibility(record, hw.gpu.name);
+    return { ok: true, model: { ...record, compatibility: compat } };
+  } catch (err) {
+    return { ok: false, code: err.code || 'errInvalidNeuralModel', message: err.message, details: err.details || null };
+  }
+});
+
+ipcMain.handle('enhanced-status', async (_event, dir) => {
+  if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.existsSync(dir)) {
+    return { ok: false, message: '无效的游戏目录' };
+  }
+  try {
+    return await combinedManager.inspectCombinedStatus(dir, {
+      payloadDir: resolvePayloadRoot(),
+      userDataDir: app.getPath('userData')
+    });
+  } catch (err) {
+    return { ok: false, message: err.message };
+  }
+});
+
+ipcMain.handle('enhanced-apply', (event, dir, config) => exclusiveMutation(async () => {
+  if (typeof dir !== 'string' || !path.isAbsolute(dir)) return { ok: false, message: '无效的游戏目录' };
+  const send = (e) => event.sender.send('job', e);
+  const result = await combinedManager.applyCombinedConfiguration(dir, {
+    ...(config || {}),
+    payloadDir: resolvePayloadRoot(),
+    userDataDir: app.getPath('userData')
+  }, send);
+  const manifest = backends.readManifest(dir);
+  if (manifest) saveOperation(dir, manifest, 'install', send);
+  return result;
+}));
+

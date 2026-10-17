@@ -106,5 +106,11 @@ contextBridge.exposeInMainWorld('lab', {
   addonRemove: (file) => ipcRenderer.invoke('addon-remove', file),
   restoreGame: (dir) => ipcRenderer.invoke('restore', dir),
   onJob: (handler) => ipcRenderer.on('job', (_e, event) => handler(event)),
-  pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return null; } }
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return null; } },
+  // ---- Enhanced Modules (DLSS 5 Neural Rendering + RTX 40 MFG + Diagnostics) ----
+  enhancedHardware: (forceRefresh) => ipcRenderer.invoke('enhanced-hardware', forceRefresh),
+  enhancedModels: () => ipcRenderer.invoke('enhanced-models'),
+  enhancedImportModel: (filePath, meta) => ipcRenderer.invoke('enhanced-import-model', filePath, meta),
+  enhancedStatus: (dir) => ipcRenderer.invoke('enhanced-status', dir),
+  enhancedApply: (dir, config) => ipcRenderer.invoke('enhanced-apply', dir, config)
 });

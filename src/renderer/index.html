@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="overlay-controls.css" />
   <link rel="stylesheet" href="chat.css" />
   <link rel="stylesheet" href="theme2.css" />
+  <link rel="stylesheet" href="enhanced-ui.css" />
 </head>
 <body>
   <div class="shell">
@@ -25,6 +26,10 @@
         <button class="nav-item" data-view="games">
           <svg viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="11" rx="4"/><path d="M7 11v3m-1.5-1.5h3M16 12h.01M18.5 14h.01"/></svg>
           <span data-i18n="navGames">Games</span><i class="dot"></i>
+        </button>
+        <button class="nav-item" data-view="enhanced">
+          <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          <span>DLSS 5 + MFG</span><i class="dot"></i>
         </button>
         <button class="nav-item" data-view="chat">
           <svg viewBox="0 0 24 24"><path d="M5 5h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 3v-4.5A2 2 0 0 1 3 15V7a2 2 0 0 1 2-2z"/><path d="M7 10h10M7 14h6"/></svg>
@@ -249,6 +254,9 @@
         <dialog id="olHotkeyDialog" class="ol-dialog ol-hotkey-dialog"><h3>Overlay hotkey</h3><p id="olKeyHelp">Click the field, then press your shortcut. Ctrl, Alt and Shift are supported. Home / Escape stay reserved for ReShade.</p><button id="olKeyCapture" class="ghost">F8</button><p id="olKeyError" role="status"></p><div class="row"><button id="olKeyCancel" class="ghost">Cancel</button><button id="olKeySave" class="glass-btn">Save</button></div></dialog>
       </section>
 
+      <!-- ENHANCED CONTROL CENTER -->
+      <section class="view" id="view-enhanced" aria-label="DLSS 5 + MFG Enhanced Control Center"></section>
+
       <section class="view" id="view-settings">
         <div class="section-head"><h3 data-i18n="navSettings">Settings</h3></div>
         <div class="glass pad" id="settings"></div>
@@ -372,5 +380,6 @@
   <script src="chat.js"></script>
   <script src="renderer.js"></script>
   <script src="theme2.js"></script>
+  <script src="enhanced-ui.js"></script>
 </body>
 </html>

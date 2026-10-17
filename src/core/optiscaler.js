@@ -165,7 +165,7 @@ function checkConflicts(gameDir, exePath, manifest, api) {
     throw fail('errOptiConflict', `Conflicting pre-existing file: ${path.join(exeDir, name)}. Restore/remove the other mod with its own installer first.`);
   }
   const pluginDir = path.join(exeDir, 'OptiScaler', 'plugins');
-  if (fs.existsSync(pluginDir) && fs.readdirSync(pluginDir).some(f => /\.(dll|asi)$/i.test(f))) throw fail('errOptiConflict', 'Existing OptiScaler plugins need to be removed with their original installer first.');
+  if (fs.existsSync(pluginDir) && fs.readdirSync(pluginDir).some(f => /\.(dll|asi)$/i.test(f) && !added.has(path.relative(gameDir, path.join(pluginDir, f)).toLowerCase()))) throw fail('errOptiConflict', 'Existing OptiScaler plugins need to be removed with their original installer first.');
   for (const name of LIBRARIES) {
     const rel = path.relative(gameDir, path.join(exeDir, 'OptiScaler', name));
     if (!added.has(rel.toLowerCase()) && fs.existsSync(safePath(gameDir, rel))) throw fail('errOptiConflict', `Pre-existing OptiScaler component: ${rel}`);

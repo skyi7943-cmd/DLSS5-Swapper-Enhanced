@@ -9,3 +9,9 @@ build/icon.png
 docs/nexus/
 tools/
 vendor/
+build-output/
+backups/
+logs/
+test-results/dx12-controlled-harness/
+test-results/user-data-sandbox/
+

@@ -96,3 +96,37 @@ SOFTWARE.
 
 DLSS5-Autopilot downloads third-party components at runtime. Those components
 remain under their own licences.
+
+## MFGAdaUnlock-RenoDx (Enhanced MFG Add-on)
+
+`renodx-mfgunlock.addon64` (v1.4.4, 2026-10-17) is bundled from:
+https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/v1.4.4
+
+Licensed under the MIT License (Copyright (c) 2026 mavismmg). The full license
+text is included in `payload/enhanced/mfg/licenses/MFGAdaUnlock-RenoDx-LICENSE.txt`.
+
+## MFG-Unlocker (RTXMFG Universal Unlocker)
+
+`MFGUnlocker.dll` / `MFGUnlocker.asi` (v1.5.0-hotfix.1, 2026-10-15) is bundled from:
+https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.5.0-hotfix.1
+
+Licensed under the MIT License (Copyright (c) 2026 dashdogy). The full license
+text is included in `payload/enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt`.
+
+## NVIDIA Streamline SDK v2.14.16 & DLSS / DLSS-G 310.9.16.0
+
+The October 2026 runtime stack in `payload/enhanced/streamline-2.14.16/` is
+sourced from the official NVIDIA Streamline v2.14.16 release (2026-10-13):
+https://github.com/NVIDIA-RTX/Streamline/releases/tag/v2.14.16
+
+Streamline interposer and plugin binaries (`sl.*.dll`) are provided under the
+NVIDIA Streamline MIT License; NVIDIA NGX binaries (`nvngx_dlss.dll` and
+`nvngx_dlssg.dll` v310.9.16.0) remain under the NVIDIA NGX SDK License Agreement.
+
+## DLSS5-Feeder v1.19.0 (October 2026 Update)
+
+The optional October 2026 Feeder stack in `payload/enhanced/feeder-1.19.0/` is
+sourced from the official DLSS5-Feeder v1.19.0 release (2026-10-16):
+https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v1.19.0
+Licensed under the MIT License.
+
