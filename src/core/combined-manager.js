@@ -330,6 +330,9 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     payloadDir,
     userDataDir
   } = config;
+  const effectivePayloadDir = mfgManager.resolvePayloadDir
+    ? mfgManager.resolvePayloadDir(payloadDir)
+    : payloadDir;
 
   const hardware = await detectHardwareEnvironment();
   const gpuName = hardware.gpu.name;
@@ -349,29 +352,41 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
       mode: neuralMode,
       modelId: neuralModelId,
       runtimeStack,
-      payloadDir,
+      payloadDir: effectivePayloadDir,
       userDataDir,
       gpuName
     }, onLog);
 
-    // 若启用了神经渲染但尚未安装消费者插件，且游戏为 64 位，自动补齐 renodx-dlss5.addon64 与 ReShade
-    if (neuralMode !== 'off' && scan.chosen.bitness === 64 && payloadDir) {
+    // 若启用了神经渲染且游戏为 64 位，自动补齐或升级 renodx-dlss5.addon64 (v8.5.0-rc10) 与 ReShade
+    if (neuralMode !== 'off' && scan.chosen.bitness === 64 && effectivePayloadDir) {
       await journal.transaction(gameDir, async () => {
         const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
-        const hasConsumer = fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')) ||
-          fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64')) ||
+        await apply.retireOldShaderCompiler(manifest, gameDir, exeDir, (code, params) => onLog({ code, params }));
+
+        const destConsumer = path.join(exeDir, 'renodx-dlss5.addon64');
+        const hasOtherConsumer = fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64')) ||
           fs.existsSync(path.join(exeDir, 'dlss5-feed.addon64')) ||
           Boolean(scan.install?.optiscaler?.installed);
+        const srcConsumer = path.join(effectivePayloadDir, 'renodx-dlss5.addon64');
+        const consumerNeedsUpdate = fs.existsSync(srcConsumer) && (
+          (!fs.existsSync(destConsumer) && !hasOtherConsumer) ||
+          (fs.existsSync(destConsumer) && fs.statSync(destConsumer).size !== fs.statSync(srcConsumer).size)
+        );
 
-        if (!hasConsumer) {
-          const srcConsumer = path.join(payloadDir, 'renodx-dlss5.addon64');
+        if (consumerNeedsUpdate || (!fs.existsSync(destConsumer) && !hasOtherConsumer)) {
           if (fs.existsSync(srcConsumer)) {
-            await apply.copyTracked(manifest, gameDir, srcConsumer, path.join(exeDir, 'renodx-dlss5.addon64'), { kind: 'addon' });
+            if (apply.setAsideRivalConsumers) {
+              await apply.setAsideRivalConsumers(manifest, gameDir, exeDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }));
+            }
+            await apply.copyTracked(manifest, gameDir, srcConsumer, destConsumer, {
+              kind: 'addon',
+              newVersion: pe.getFileVersion(srcConsumer)
+            });
             await apply.enableAddonInIni(exeDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
           }
           const srcDlss = runtimeStack === 'oct2026-310.9.16'
-            ? path.join(payloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlss.dll')
-            : path.join(payloadDir, 'streamline', 'nvngx_dlss.dll');
+            ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlss.dll')
+            : path.join(effectivePayloadDir, 'streamline', 'nvngx_dlss.dll');
           if (fs.existsSync(srcDlss) && !fs.existsSync(path.join(exeDir, 'nvngx_dlss.dll'))) {
             await apply.copyTracked(manifest, gameDir, srcDlss, path.join(exeDir, 'nvngx_dlss.dll'), {
               kind: 'runtime',
@@ -380,7 +395,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
           }
           const reshadeCheck = scan.reshade;
           if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
-            const bundledReshade = path.join(payloadDir, 'reshade-vulkan', 'ReShade64.dll');
+            const bundledReshade = path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll');
             if (fs.existsSync(bundledReshade)) {
               const hookFile = path.join(exeDir, 'dxgi.dll');
               const hookExisted = fs.existsSync(hookFile);
@@ -390,6 +405,9 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
             }
           }
           if (!manifest.route) manifest.route = 'native';
+          await apply.saveActiveManifest(gameDir, manifest);
+        } else if (fs.existsSync(destConsumer)) {
+          await apply.enableAddonInIni(exeDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
           await apply.saveActiveManifest(gameDir, manifest);
         }
       });
@@ -403,16 +421,16 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
       runtimeStack,
       hdrCompatibility,
       upgradeDlssg: true,
-      payloadDir
+      payloadDir: effectivePayloadDir
     }, onLog);
 
     // 若启用了 MFG 且请求补齐缺失的 Streamline (sl.dlss_g.dll / sl.reflex.dll / sl.pcl.dll)
-    if (mfgMode !== 'off' && ensureStreamline && payloadDir) {
+    if (mfgMode !== 'off' && ensureStreamline && effectivePayloadDir) {
       await journal.transaction(gameDir, async () => {
         const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
         const slDir = runtimeStack === 'oct2026-310.9.16'
-          ? path.join(payloadDir, 'enhanced', 'streamline-2.14.16')
-          : path.join(payloadDir, 'streamline');
+          ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16')
+          : path.join(effectivePayloadDir, 'streamline');
 
         const hasOwnInterposer = scan.streamlineFiles.some((f) => /^sl\.interposer\.dll$/i.test(f.name));
         if (!hasOwnInterposer && fs.existsSync(slDir)) {
@@ -447,7 +465,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     });
   }
 
-  const updatedStatus = await inspectCombinedStatus(gameDir, { payloadDir, userDataDir });
+  const updatedStatus = await inspectCombinedStatus(gameDir, { payloadDir: effectivePayloadDir, userDataDir });
   return {
     ok: true,
     neuralResult,

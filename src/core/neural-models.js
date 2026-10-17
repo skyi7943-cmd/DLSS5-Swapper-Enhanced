@@ -150,10 +150,10 @@ const RUNTIME_STACKS = Object.freeze([
     dlssgVersion: '310.9.1.0',
     streamlineVersion: '2.13.0.0',
     feederVersion: '1.17.0',
-    renodxVersion: '6.5.3',
+    renodxVersion: '8.5.0-rc10',
     status: 'verified',
     badge: '已验证可用',
-    description: 'v2.2.9 基准验证运行时栈，与内置 F8 游戏内嵌面板 (Overlay) 二进制指纹完全匹配。'
+    description: 'v2.2.9 基准验证运行时栈，配备升级版 RenoDX DLSS 5 (v8.5.0-rc10)，与内置 F8 游戏内嵌面板 (Overlay) 二进制指纹完全匹配。'
   }),
   Object.freeze({
     id: 'oct2026-310.9.16',
@@ -162,12 +162,32 @@ const RUNTIME_STACKS = Object.freeze([
     dlssgVersion: '310.9.16.0',
     streamlineVersion: '2.14.16.0',
     feederVersion: '1.19.0',
-    renodxVersion: '6.5.3',
+    renodxVersion: '8.5.0-rc10',
     status: 'experimental',
     badge: '实验性支持',
-    description: '2026年10月16日 NVIDIA 发布的最新 NGX 310.9.16 与 Streamline 2.14.16.0 运行时，搭配 DLSS5-Feeder 1.19.0 (含 DX11 渲染状态保护与 helper addon)。'
+    description: '2026年10月16日 NVIDIA 发布的最新 NGX 310.9.16 与 Streamline 2.14.16.0 运行时，搭配 DLSS5-Feeder 1.19.0 与 RenoDX DLSS 5 v8.5.0-rc10。'
   })
 ]);
+
+function resolvePayloadDir(payloadDir) {
+  const candidates = [
+    payloadDir,
+    process.resourcesPath ? path.join(process.resourcesPath, 'payload') : null,
+    path.resolve(__dirname, '..', '..', 'payload'),
+    path.resolve(__dirname, '..', '..', 'build-output', 'payload'),
+    'E:\\DLSS5-Swapper-Enhanced\\payload',
+    'E:\\DLSS5-Swapper-Enhanced\\build-output\\payload'
+  ].filter(Boolean);
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(path.join(dir, 'streamline', 'nvngx_dlssnr.dll')) ||
+          fs.existsSync(path.join(dir, 'renodx-dlss5.addon64'))) {
+        return dir;
+      }
+    } catch {}
+  }
+  return payloadDir || path.resolve(__dirname, '..', '..', 'payload');
+}
 
 // 扫描二进制缓冲区中的 CUDA Fatbin (0xBA55ED50) 容器，提取内嵌的 SM 架构与核函数计数
 function scanBufferArchitectures(buf) {
@@ -414,7 +434,8 @@ function writeCustomModelsIndex(userDataDir, rows) {
 
 // 列出所有已知与可用的 DLSS 5 神经渲染模型（合并内置 payload、数据库条目与用户合法导入的模型）
 function listNeuralModels({ payloadDir, userDataDir, gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU' } = {}) {
-  const bundledPath = payloadDir ? path.join(payloadDir, 'streamline', 'nvngx_dlssnr.dll') : null;
+  const effectivePayloadDir = resolvePayloadDir(payloadDir);
+  const bundledPath = effectivePayloadDir ? path.join(effectivePayloadDir, 'streamline', 'nvngx_dlssnr.dll') : null;
   const bundledInspection = bundledPath && fs.existsSync(bundledPath) ? inspectNeuralModelBinary(bundledPath) : null;
   const customRows = readCustomModelsIndex(userDataDir);
 
@@ -544,10 +565,10 @@ function parseNeuralRuntimeLogs(gameDir, exeDir) {
           message: '消费者插件未能加载 nvngx_dlssnr.dll。'
         });
       }
-      if (/DLSSNR.*initialized|Neural Rendering.*active|CreateFeature.*18.*succeeded|dlss5-feed.*connected/i.test(text)) {
+      if (/DLSSNR.*initialized|Neural Rendering.*active|CreateFeature.*18.*succeeded|dlss5-feed.*connected|NR runtime loaded|NR-VERDICT.*state=ENGAGED/i.test(text)) {
         initialized = true;
       }
-      if (/EvaluateFeature.*18|dlss5-feed.*frame\s+\d+|DLSSNR.*Evaluate/i.test(text)) {
+      if (/EvaluateFeature.*18|dlss5-feed.*frame\s+\d+|DLSSNR.*Evaluate|NR-VERDICT.*evals=[1-9]\d*/i.test(text)) {
         evaluatedFrames = true;
       }
       const matchPath = text.match(/([A-Za-z]:\\[^\r\n"]*?nvngx_dlssnr\.dll)/i);
@@ -566,6 +587,7 @@ function parseNeuralRuntimeLogs(gameDir, exeDir) {
 
 // 检查指定游戏目录的 DLSS 5 神经渲染完整状态、模型版本、依赖项与 GPU 兼容性
 async function inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU' } = {}) {
+  const effectivePayloadDir = resolvePayloadDir(payloadDir);
   const scan = await scanGame(gameDir);
   const exePath = scan.chosen ? scan.chosen.path : null;
   const exeDir = exePath ? path.dirname(exePath) : gameDir;
@@ -611,7 +633,7 @@ async function inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuNa
     : evaluateModelGpuCompatibility(MODEL_DATABASE[0], gpuName);
 
   const logs = parseNeuralRuntimeLogs(gameDir, exeDir);
-  const availableModels = listNeuralModels({ payloadDir, userDataDir, gpuName });
+  const availableModels = listNeuralModels({ payloadDir: effectivePayloadDir, userDataDir, gpuName });
   const latestCompatible = availableModels.find((m) => m.role === 'latest_compatible') || availableModels[0];
   const oct2026Model = availableModels.find((m) => m.id === '310.9.16-oct2026');
 
@@ -663,7 +685,7 @@ async function inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuNa
     } : null,
     latestCompatibleModel: latestCompatible,
     oct2026Model,
-    runtimeVersion: dlssSrVersion || (payloadDir ? pe.getFileVersion(path.join(payloadDir, 'streamline', 'nvngx_dlss.dll')) : '310.9.1.0'),
+    runtimeVersion: dlssSrVersion || (effectivePayloadDir ? pe.getFileVersion(path.join(effectivePayloadDir, 'streamline', 'nvngx_dlss.dll')) : '310.9.1.0'),
     runtimeStack,
     runtimeStacks: RUNTIME_STACKS,
     gpuCompatibility: gpuCompat,
@@ -686,6 +708,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     userDataDir,
     gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU'
   } = options;
+  const effectivePayloadDir = resolvePayloadDir(payloadDir);
 
   const scan = await scanGame(gameDir);
   if (!scan.chosen) throw Object.assign(new Error('未在游戏目录中找到可执行文件'), { code: 'errNoExe' });
@@ -733,7 +756,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     }
 
     // 查找要部署的目标模型文件
-    const models = listNeuralModels({ payloadDir, userDataDir, gpuName });
+    const models = listNeuralModels({ payloadDir: effectivePayloadDir, userDataDir, gpuName });
     let chosenModel = null;
     if (modelId) {
       chosenModel = models.find((m) => m.id === modelId);
@@ -778,10 +801,10 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     }
 
     // 可选：同步切换 DLSS 310.9.16 / 310.9.1 基础运行时栈
-    if (runtimeStack && payloadDir) {
+    if (runtimeStack && effectivePayloadDir) {
       const stackDir = runtimeStack === 'oct2026-310.9.16'
-        ? path.join(payloadDir, 'enhanced', 'streamline-2.14.16')
-        : path.join(payloadDir, 'streamline');
+        ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16')
+        : path.join(effectivePayloadDir, 'streamline');
       const srcDlss = path.join(stackDir, 'nvngx_dlss.dll');
       if (fs.existsSync(srcDlss)) {
         const destDlss = path.join(targetDir, 'nvngx_dlss.dll');
@@ -791,7 +814,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
         });
       }
       if (runtimeStack === 'oct2026-310.9.16' && manifest.route === 'feeder') {
-        const feederEnhDir = path.join(payloadDir, 'enhanced', 'feeder-1.19.0');
+        const feederEnhDir = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0');
         const addonName = bitness === 32 ? 'dlss5-feed.addon32' : 'dlss5-feed.addon64';
         const srcAddon = path.join(feederEnhDir, addonName);
         if (fs.existsSync(srcAddon)) {

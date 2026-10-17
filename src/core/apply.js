@@ -356,6 +356,7 @@ async function installReShadeAt(options) {
   if (direct) {
     if (pe.getBitness(bundled) !== bitness || !isAddonReShade(bundled)) throw fail('errReShadeArchitecture');
     const existed = fs.existsSync(hookPath);
+    if (gameInstance) await backupReShadeConfig(gameDir, exeDir, manifest);
     await copyTracked(manifest, gameDir, bundled, hookPath, { kind: 'reshade' });
     if (gameInstance) {
       manifest.reshade.installedByUs = !existed;
@@ -634,18 +635,30 @@ async function applyFeeder(config, log) {
   return manifest;
 }
 
-// Keeps ReShade from starting with our add-on switched off.
+// Keeps ReShade from starting with our add-on switched off, and clears stale
+// multi-pass NRPasses>1 left behind by an earlier renodx-dlss.addon64 run.
 async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
   const ini = path.join(exeDir, 'ReShade.ini');
   if (!fs.existsSync(ini)) return;
   let text = fs.readFileSync(ini, 'utf8');
+  let changed = false;
   const stem = addonName.replace(/\.addon(?:32|64)?$/i, '');
   const match = text.match(/^DisabledAddons=(.*)$/m);
   if (match && match[1].toLowerCase().includes(stem.toLowerCase())) {
     const kept = match[1].split(',').filter(name => !name.toLowerCase().includes(stem.toLowerCase()));
     text = text.replace(/^DisabledAddons=.*$/m, 'DisabledAddons=' + kept.join(','));
-    await writeTracked(manifest, gameDir, ini, text, { kind: 'config' });
+    changed = true;
     log('addonEnabledInIni');
+  }
+  if (/^renodx-dlss5\.addon64$/i.test(addonName)) {
+    const nrPasses = feederConfig.getIni(text, 'RenoDX DLSS', 'NRPasses');
+    if (nrPasses && Number(nrPasses) > 1) {
+      text = feederConfig.setIni(text, 'RenoDX DLSS', 'NRPasses', '1');
+      changed = true;
+    }
+  }
+  if (changed) {
+    await writeTracked(manifest, gameDir, ini, text, { kind: 'config' });
   }
 }
 
@@ -993,9 +1006,13 @@ async function restoreFiles(gameDir, manifest, onLog) {
 
   const exeDir = path.dirname(path.join(gameDir, manifest.game.exe));
   const leftovers = [...(manifest.reshade?.filesAdded || [])];
-  // The hook DLL goes only when we were the ones who put it there.
-  if (manifest.reshade?.installedByUs && manifest.reshade.file) leftovers.push(manifest.reshade.file);
-  for (const name of leftovers) {
+  // The hook DLL and runtime-generated ReShade configs go when we were the ones
+  // who put ReShade there (any pre-existing ReShade.ini is in manifest.replaced
+  // and skipped below).
+  if (manifest.reshade?.installedByUs && manifest.reshade.file) {
+    leftovers.push(manifest.reshade.file, 'ReShade.ini', 'ReShadePreset.ini', 'ReShade.log');
+  }
+  for (const name of [...new Set(leftovers)]) {
     const target = journal.safePath(gameDir, path.relative(gameDir, path.join(exeDir, name)));
     if (manifest.replaced.some(item => relKey(item.rel) === relKey(path.relative(gameDir, target)))) continue;
     if (!fs.existsSync(target)) continue;
@@ -1104,4 +1121,4 @@ async function makeReShadeConfigWritable(exeDir) {
   return cleared;
 }
 
-module.exports = { hookForApi, makeReShadeConfigWritable, applySwap, restore, restoreFiles, recoverableManifest, retireOldShaderCompiler, canWrite, backupRoot, compareVersions, beginManifest, originalPath, copyTracked, writeTracked, saveActiveManifest, enableAddonInIni, trackBeforeWrite };
+module.exports = { hookForApi, makeReShadeConfigWritable, applySwap, restore, restoreFiles, recoverableManifest, retireOldShaderCompiler, setAsideRivalConsumers, canWrite, backupRoot, compareVersions, beginManifest, originalPath, copyTracked, writeTracked, saveActiveManifest, enableAddonInIni, trackBeforeWrite };
