@@ -412,6 +412,19 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
         }
       });
     }
+  } else if (
+    effectivePayloadDir &&
+    (fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')) || fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64'))) &&
+    !fs.existsSync(path.join(exeDir, 'nvngx_dlssnr.dll'))
+  ) {
+    // 若用户仅点击“安装 / 应用 MFG 配置”，但游戏目录中已有 renodx-dlss5.addon64 而缺失 nvngx_dlssnr.dll，自动补齐 nvngx_dlssnr.dll
+    await neuralModels.applyNeuralModelSelection(gameDir, {
+      mode: 'latest_compatible',
+      runtimeStack,
+      payloadDir: effectivePayloadDir,
+      userDataDir,
+      gpuName
+    }, onLog);
   }
 
   // 2. 应用多帧生成设置（若调用方指定了 mfgMode）

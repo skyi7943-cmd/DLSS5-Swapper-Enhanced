@@ -435,8 +435,7 @@
     if (btnRestoreNr) {
       btnRestoreNr.onclick = async () => {
         await root.lab.restoreGame(dir);
-        draft.neuralMode = 'off';
-        draft.mfgMode = 'off';
+        draftState.delete(dir);
         await refreshContainer(container, dir);
       };
     }
@@ -481,8 +480,7 @@
     if (btnRestoreAll) {
       btnRestoreAll.onclick = async () => {
         await root.lab.restoreGame(dir);
-        draft.neuralMode = 'off';
-        draft.mfgMode = 'off';
+        draftState.delete(dir);
         await refreshContainer(container, dir);
       };
     }

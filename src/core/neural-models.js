@@ -725,21 +725,33 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
     const destNr = path.join(targetDir, 'nvngx_dlssnr.dll');
 
-    // 如果选择关闭神经渲染 ('off')，将已注入的 nvngx_dlssnr.dll 移除或从备份恢复，并在配置中关闭神经渲染
+    // 如果选择关闭神经渲染 ('off')，将已注入的 nvngx_dlssnr.dll 与消费者插件一并移除或从备份恢复，避免孤立插件提示“未安装 NR 运行时”
     if (mode === 'off') {
-      if (fs.existsSync(destNr)) {
-        const rel = path.relative(gameDir, destNr);
+      const filesToDisable = [
+        destNr,
+        path.join(exeDir, 'nvngx_dlssnr.dll'),
+        path.join(exeDir, 'renodx-dlss5.addon64'),
+        path.join(exeDir, 'renodx-dlss.addon64'),
+        path.join(targetDir, 'renodx-dlss5.addon64'),
+        path.join(targetDir, 'renodx-dlss.addon64')
+      ];
+      const visited = new Set();
+      for (const fileTarget of filesToDisable) {
+        const normKey = path.resolve(fileTarget).toLowerCase();
+        if (visited.has(normKey) || !fs.existsSync(fileTarget)) continue;
+        visited.add(normKey);
+        const rel = path.relative(gameDir, fileTarget);
         const rep = (manifest.replaced || []).find((r) => r.rel.toLowerCase() === rel.toLowerCase());
         if (rep) {
           const backupFile = apply.originalPath(gameDir, manifest, rep.rel);
           if (fs.existsSync(backupFile)) {
-            await journal.capture(gameDir, destNr);
-            await fs.promises.copyFile(backupFile, destNr);
+            await journal.capture(gameDir, fileTarget);
+            await fs.promises.copyFile(backupFile, fileTarget);
             onLog({ code: 'neuralModelRestoredOriginal', params: { rel } });
           }
         } else {
-          await journal.capture(gameDir, destNr);
-          await fs.promises.unlink(destNr);
+          await journal.capture(gameDir, fileTarget);
+          await fs.promises.unlink(fileTarget);
           onLog({ code: 'neuralModelDisabled', params: { rel } });
         }
       }
