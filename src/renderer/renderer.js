@@ -861,8 +861,10 @@ function installOptions(d, pick, dir) {
 // A newer release exists, said once, in the corner. The link is the same
 // allowlisted releases page the About view uses; nothing downloads itself.
 async function showUpdateNotice() {
+  // Enhanced: 已彻底断开原作自动升级提示，防止覆盖增强版模块
   const link = $('statusUpdate');
-  if (!link || !window.lab.checkUpdate) return;
+  if (link) link.classList.add('hidden');
+  if (!link || !window.lab.checkUpdate || !window.lab.allowUpstreamUpdate) return;
   let answer = null;
   try { answer = await window.lab.checkUpdate(); } catch { return; }
   if (!answer) return;

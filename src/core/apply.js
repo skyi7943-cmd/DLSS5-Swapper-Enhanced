@@ -638,22 +638,50 @@ async function applyFeeder(config, log) {
 // Keeps ReShade from starting with our add-on switched off, and clears stale
 // multi-pass NRPasses>1 left behind by an earlier renodx-dlss.addon64 run.
 async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
+  // 自动同步部署游戏内 Home 菜单全量简体中文化插件 dlss5-zh-cn.addon64
+  try {
+    const tmpRoot = path.resolve(require('os').tmpdir()).toLowerCase();
+    const normExeDir = path.resolve(exeDir).toLowerCase();
+    if (!normExeDir.startsWith(tmpRoot)) {
+      const zhCandidates = [
+        path.resolve(__dirname, '..', '..', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64'),
+        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
+        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
+        'E:\\DLSS5-Swapper-Enhanced\\payload\\enhanced\\zh-cn\\dlss5-zh-cn.addon64'
+      ].filter(Boolean);
+      const zhSrc = zhCandidates.find((p) => fs.existsSync(p));
+      if (zhSrc && fs.existsSync(exeDir)) {
+        await copyOver(zhSrc, path.join(exeDir, 'dlss5-zh-cn.addon64'));
+      }
+    }
+  } catch {}
+
   const ini = path.join(exeDir, 'ReShade.ini');
   if (!fs.existsSync(ini)) return;
   let text = fs.readFileSync(ini, 'utf8');
   let changed = false;
   const stem = addonName.replace(/\.addon(?:32|64)?$/i, '');
   const match = text.match(/^DisabledAddons=(.*)$/m);
-  if (match && match[1].toLowerCase().includes(stem.toLowerCase())) {
-    const kept = match[1].split(',').filter(name => !name.toLowerCase().includes(stem.toLowerCase()));
+  if (match && (match[1].toLowerCase().includes(stem.toLowerCase()) || match[1].toLowerCase().includes('dlss5-zh-cn'))) {
+    const kept = match[1].split(',').filter(name => {
+      const lower = name.toLowerCase();
+      return !lower.includes(stem.toLowerCase()) && !lower.includes('dlss5-zh-cn');
+    });
     text = text.replace(/^DisabledAddons=.*$/m, 'DisabledAddons=' + kept.join(','));
     changed = true;
     log('addonEnabledInIni');
   }
   if (/^renodx-dlss5\.addon64$/i.test(addonName)) {
-    const nrPasses = feederConfig.getIni(text, 'RenoDX DLSS', 'NRPasses');
-    if (nrPasses && Number(nrPasses) > 1) {
-      text = feederConfig.setIni(text, 'RenoDX DLSS', 'NRPasses', '1');
+    for (const sec of ['RenoDX DLSS', 'RenoDX.DLSS5']) {
+      const nrPasses = feederConfig.getIni(text, sec, 'NRPasses');
+      if (nrPasses && Number(nrPasses) > 1) {
+        text = feederConfig.setIni(text, sec, 'NRPasses', '1');
+        changed = true;
+      }
+    }
+    const uiLang = feederConfig.getIni(text, 'RenoDX.DLSS5', 'UiLanguage');
+    if (uiLang && uiLang !== 'zh-Hans' && uiLang !== 'auto') {
+      text = feederConfig.setIni(text, 'RenoDX.DLSS5', 'UiLanguage', 'zh-Hans');
       changed = true;
     }
   }
@@ -1005,7 +1033,7 @@ async function restoreFiles(gameDir, manifest, onLog) {
   }
 
   const exeDir = path.dirname(path.join(gameDir, manifest.game.exe));
-  const leftovers = [...(manifest.reshade?.filesAdded || [])];
+  const leftovers = [...(manifest.reshade?.filesAdded || []), 'dlss5-zh-cn.addon64'];
   // The hook DLL and runtime-generated ReShade configs go when we were the ones
   // who put ReShade there (any pre-existing ReShade.ini is in manifest.replaced
   // and skipped below).

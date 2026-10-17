@@ -1604,6 +1604,11 @@ function newerRelease(current, latest) {
 ipcMain.handle('update-check', async () => {
   if (updateAnswer) return updateAnswer;
   const current = app.getVersion();
+  // Enhanced: 在真实 Electron 运行环境中彻底断开原作 GitHub 在线升级检查，防止覆盖增强版功能
+  if (typeof app.isPackaged === 'boolean') {
+    updateAnswer = { current, latest: current, newer: false, disabled: true };
+    return updateAnswer;
+  }
   try {
     const response = await fetch('https://api.github.com/repos/rakanki911/DLSS5-Swapper/releases/latest', {
       headers: { 'User-Agent': `DLSS5-Swapper/${current}`, Accept: 'application/vnd.github+json' },
