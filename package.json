@@ -1,7 +1,7 @@
 {
-  "name": "dlss5-swapper",
-  "version": "2.2.9",
-  "description": "DLSS 5 (Neural Rendering) for your games - a library that finds them, and one click to install",
+  "name": "skyi-dlss-enhanced",
+  "version": "2.3.0-community.1",
+  "description": "Independent community DLSS configuration manager; experimental integrations require user-supplied runtimes",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -10,15 +10,15 @@
     "test:payload": "node scripts/test-feeder-payload.js",
     "test:optiscaler": "node scripts/test-optiscaler-payload.js",
     "payload": "node scripts/collect-payload.js",
-    "prebuild": "npm run payload",
-    "build": "electron-builder --win",
-    "build:linux": "electron-builder --linux AppImage deb",
+    "prebuild": "node scripts/release-guard.js",
+    "build": "electron-builder --win --publish never",
+    "build:linux": "electron-builder --linux AppImage deb --publish never",
     "icon": "electron scripts/make-icon.js",
-    "build:portable": "electron-builder --win portable",
+    "build:portable": "electron-builder --win portable --publish never",
     "overlay:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-overlay.ps1",
     "overlay:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-overlay.ps1"
   },
-  "author": "Rakan Alkhaldi",
+  "author": "skyi7943-cmd and community contributors",
   "license": "MIT",
   "dependencies": {
     "extract-zip": "^2.0.1"
@@ -28,8 +28,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.rakan.dlss5swapper",
-    "productName": "DLSS 5 Swapper",
+    "appId": "io.github.skyi7943cmd.dlssenhanced",
+    "productName": "Skyi DLSS Enhanced",
     "files": [
       "main.js",
       "preload.js",
@@ -37,37 +37,20 @@
       "THIRD_PARTY_NOTICES.md",
       "src/**/*",
       "assets/**/*",
-      "package.json"
+      "package.json",
+      "LICENSE",
+      "!**/*.{dll,exe,asi,addon,addon32,addon64,zip,7z,onnx,safetensors}",
+      "!assets/logo*.png",
+      "!src/renderer/support-*",
+      "!src/renderer/icon.png"
     ],
-    "extraResources": [
-      {
-        "from": "payload",
-        "to": "payload",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "addons",
-        "to": "addons",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "overlay-bin",
-        "to": "overlay",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
+    "extraResources": [],
     "win": {
       "target": [
         "nsis",
         "portable"
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/community.ico"
     },
     "linux": {
       "target": [
@@ -75,14 +58,14 @@
         "deb"
       ],
       "category": "Game",
-      "maintainer": "Rakan Alkhaldi",
-      "icon": "app_iocn.png",
-      "artifactName": "DLSS5-Swapper-${version}-${arch}.${ext}"
+      "maintainer": "skyi7943-cmd and community contributors",
+      "icon": "src/renderer/community-icon.png",
+      "artifactName": "Skyi-DLSS-Enhanced-${version}-${arch}.${ext}"
     },
-    "compression": "maximum",
+    "compression": "normal",
     "portable": {
-      "artifactName": "DLSS5-Swapper-${version}-portable.exe",
-      "unpackDirName": "DLSS5-Swapper"
+      "artifactName": "Skyi-DLSS-Enhanced-${version}-portable.exe",
+      "unpackDirName": "Skyi-DLSS-Enhanced"
     },
     "nsis": {
       "oneClick": false,
@@ -90,13 +73,24 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "DLSS 5 Swapper",
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerHeaderIcon": "build/icon.ico",
+      "shortcutName": "Skyi DLSS Enhanced",
+      "installerIcon": "build/community.ico",
+      "uninstallerIcon": "build/community.ico",
+      "installerHeaderIcon": "build/community.ico",
       "deleteAppDataOnUninstall": true,
-      "artifactName": "DLSS5-Swapper-Setup-${version}.exe",
+      "artifactName": "Skyi-DLSS-Enhanced-Setup-${version}.exe",
       "include": "build/installer.nsh"
-    }
+    },
+    "beforePack": "./scripts/release-guard.js",
+    "publish": null,
+    "afterPack": "./scripts/verify-packaged-resources.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced.git"
+  },
+  "homepage": "https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced",
+  "bugs": {
+    "url": "https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/issues"
   }
 }

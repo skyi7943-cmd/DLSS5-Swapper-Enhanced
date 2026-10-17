@@ -1,70 +1,66 @@
 # Third-party notices
 
-## OptiScaler DLSS-NR (optional download)
+## Source attribution and distribution scope
 
-OptiScaler DLSS-NR is an independently licensed project, not part of this
-application's MIT-licensed implementation:
-https://github.com/Dagherbou/OptiScaler_DLSSNR
+Skyi DLSS Enhanced is an independent community fork of the MIT release of
+rakanki911/DLSS5-Swapper v2.2.9, originally Copyright (c) 2026 Rakan Alkhaldi.
+The original copyright and full grant remain in LICENSE, which is also packaged.
+Source: https://github.com/rakanki911/DLSS5-Swapper
+Fork maintenance: https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced
 
-A second, independently licensed project is offered per game: the pre-SR
-multipass fork of the same idea, pinned at the DLSS5-Feeder author's build of
-it. Everything below applies to both.
-https://github.com/wilsjo2/OptiScaler-DLSSNR-PreSR-Multipass
-https://github.com/jlrouzies-fr/OptiScaler-DLSSNR-PreSR-Multipass
+New community builds do not bundle game runtimes, models or plug-ins. Electron
+and npm dependencies retain their own licenses (Electron packaging retains its
+LICENSE and LICENSES.chromium.html). This notice does not license NVIDIA files.
+Historical bundled-version claims below have been replaced with the current
+source-only distribution policy; old EXEs need a separate artifact audit.
 
-The optional backend downloads the official archive of the build a game names
-directly from its release page, with a pinned SHA-256 checksum. No upstream
-executable, DLL or source is bundled with Swapper, and its setup/removal
-scripts are not executed. Upstream binaries remain unmodified; configuration
-and tracked deployment are performed by this application.
+## NVIDIA DLSS / NGX and neural rendering models
 
-The upstream GNU GPL version 3 licence (commit 393e070) is downloaded and
-checksum-verified separately because it is not included in Dagherbou's release
-ZIP; the pre-SR fork carries its own copy inside the archive the pinned digest
-already covers, and the fork's PeripheralWarp and FidelityFX v1 notices travel
-with it.
-The licence, RenoDX attribution, and supplied DirectX/FidelityFX/XeSS notices
-are retained in the cache and copied into `OptiScaler/licenses` in the game.
-Corresponding upstream source: https://github.com/Dagherbou/OptiScaler_DLSSNR/tree/393e070
-Corresponding upstream source for the fork:
-https://github.com/jlrouzies-fr/OptiScaler-DLSSNR-PreSR-Multipass/tree/v0.8.92
+Official terms: https://github.com/NVIDIA/DLSS/blob/main/LICENSE.txt
+Official downloads: https://github.com/NVIDIA/DLSS
 
-NVIDIA's Neural Rendering runtime is not supplied by this OptiScaler release.
-This integration uses the existing Swapper payload's `nvngx_dlssnr.dll`; it
-does not relicense that file or imply NVIDIA support for the integration.
+The RTX SDK license conditionally permits application redistribution; it is
+not a blanket permission to mirror standalone DLLs or modified neural models.
+Sections 1(c), 2 and 4 govern distribution, retention of notices, modification,
+technical limitations and endorsement. Applicable supplements also matter.
+Read the license accompanying the exact downloaded version.
 
-## DLSS5-Feeder
+No provenance or specific redistribution permission was supplied for the
+historical nvngx_dlssnr.dll sm_89 / 310.8.SF-v2 model. Its PDB strings, CUDA
+fatbin contents, hash or alleged signature do not establish those permissions.
+It and nvngx_dlss.dll / nvngx_dlssg.dll are excluded from new releases pending
+version-specific license and provenance evidence. User import is for files the
+user is entitled to use, not permission to modify, bypass restrictions or share.
 
-The bundled client add-ons, 64-bit helper, shader and diagnostic verifier are
-from the official DLSS5-Feeder v1.17.0 release:
-https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v1.17.0
+## Streamline
 
-The project's MIT licence is included in payload/feeder/licenses/DLSS5-Feeder-LICENSE.txt.
-Release archive and component checksums are pinned in src/core/feeder-release.js.
+Source and release terms: https://github.com/NVIDIA-RTX/Streamline
+Audit the LICENSE and per-component notices of the exact release. Do not assume
+all sl.* binaries and their bundled NVIDIA dependencies are MIT merely because
+some Streamline source files are MIT. No Streamline binaries are bundled here.
+The claimed historical 2.14.16 package was not available in this checkout for
+artifact-level verification.
 
-## RenoDX DLSS 5 add-ons
+## Optional independently licensed components
 
-Two builds of ShortFuse's RenoDX neural consumer are bundled: the generic
-DLSS 5 add-on that every route installs, and the DLSS Tool build that the
-multipass route installs in its place.
-https://github.com/clshortfuse/renodx
+| Component | Source / license review point | Current delivery |
+| --- | --- | --- |
+| ReShade | https://github.com/crosire/reshade (BSD-3-Clause source; inspect actual release notices) | User supplied |
+| RenoDX consumers | https://github.com/clshortfuse/renodx and the precise release/source revision | User supplied; no binary grant inferred from a mirror |
+| DLSS5-Feeder | https://github.com/jlrouzies-fr/DLSS5-Feeder (upstream MIT; retain complete notice with each version) | User supplied |
+| MFGAdaUnlock-RenoDx | https://github.com/mavismmg/MFGAdaUnlock-RenoDx (historical metadata says MIT; review exact source/release) | User supplied; NVIDIA rights remain separate |
+| MFG-Unlocker | https://github.com/dashdogy/MFG-Unlocker (historical metadata says MIT; review exact source/release) | User supplied; NVIDIA rights remain separate |
+| OptiScaler DLSS-NR | https://github.com/Dagherbou/OptiScaler_DLSSNR/tree/393e070 (GPL-3.0) | Optional upstream download; independent code, preserve source/license notices |
+| OptiScaler pre-SR fork | https://github.com/jlrouzies-fr/OptiScaler-DLSSNR-PreSR-Multipass/tree/v0.8.92 | Optional upstream download; GPL and included PeripheralWarp/FidelityFX/XeSS notices retained |
+| dgVoodoo2 | https://github.com/dege-diosg/dgVoodoo2 and https://dege.freeweb.hu/dgVoodoo2/ReadmeGeneral/ | Optional full upstream archive; separately licensed; never bundled |
+| VORT shaders | https://github.com/vortigern11/vort_Shaders | User supplied with matching license |
 
-Both are redistributed from the community release repository the upstream
-Feeder installer also draws on, and each is pinned by release URL and digest in
-src/core/renodx-release.js:
-https://github.com/RankFTW/rhi-repo/releases
-
-## dgVoodoo2
-
-dgVoodoo2 is a separately licensed runtime dependency for DX8/DX9 translation:
-https://github.com/dege-diosg/dgVoodoo2
-https://dege.freeweb.hu/dgVoodoo2/ReadmeGeneral/
-
-Its binaries are not bundled with this application. When a DX8/DX9 installation
-is requested, the application downloads the complete official v2.87.5 archive,
-verifies its pinned SHA-256 checksum and retains the original documentation
-and licence in its component cache. dgVoodoo2 remains under its author's
-licence, not this application's MIT licence.
+The optional downloaders retain their existing checksum and license handling;
+this review does not certify every file within an upstream archive. A future
+bundled release needs an inventory of each binary, origin, hash, applicable
+terms, required notices and source obligations. No unreviewed executable may be
+added to the packaged src/assets inputs or extraResources. Existing releases
+and their embedded ASAR/resources were not supplied and are not certified.
 
 ## DLSS5-Autopilot
 
@@ -96,37 +92,4 @@ SOFTWARE.
 
 DLSS5-Autopilot downloads third-party components at runtime. Those components
 remain under their own licences.
-
-## MFGAdaUnlock-RenoDx (Enhanced MFG Add-on)
-
-`renodx-mfgunlock.addon64` (v1.4.4, 2026-10-17) is bundled from:
-https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/v1.4.4
-
-Licensed under the MIT License (Copyright (c) 2026 mavismmg). The full license
-text is included in `payload/enhanced/mfg/licenses/MFGAdaUnlock-RenoDx-LICENSE.txt`.
-
-## MFG-Unlocker (RTXMFG Universal Unlocker)
-
-`MFGUnlocker.dll` / `MFGUnlocker.asi` (v1.5.0-hotfix.1, 2026-10-15) is bundled from:
-https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.5.0-hotfix.1
-
-Licensed under the MIT License (Copyright (c) 2026 dashdogy). The full license
-text is included in `payload/enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt`.
-
-## NVIDIA Streamline SDK v2.14.16 & DLSS / DLSS-G 310.9.16.0
-
-The October 2026 runtime stack in `payload/enhanced/streamline-2.14.16/` is
-sourced from the official NVIDIA Streamline v2.14.16 release (2026-10-13):
-https://github.com/NVIDIA-RTX/Streamline/releases/tag/v2.14.16
-
-Streamline interposer and plugin binaries (`sl.*.dll`) are provided under the
-NVIDIA Streamline MIT License; NVIDIA NGX binaries (`nvngx_dlss.dll` and
-`nvngx_dlssg.dll` v310.9.16.0) remain under the NVIDIA NGX SDK License Agreement.
-
-## DLSS5-Feeder v1.19.0 (October 2026 Update)
-
-The optional October 2026 Feeder stack in `payload/enhanced/feeder-1.19.0/` is
-sourced from the official DLSS5-Feeder v1.19.0 release (2026-10-16):
-https://github.com/jlrouzies-fr/DLSS5-Feeder/releases/tag/v1.19.0
-Licensed under the MIT License.
 

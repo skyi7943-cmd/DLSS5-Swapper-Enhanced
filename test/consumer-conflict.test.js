@@ -40,11 +40,10 @@ test('a 2.2.5 payload, with only the multipass file at its root, still installs 
   assert.notEqual(source.addon, source.feeder.multipassAddon);
 });
 
-test('the build copies the verified renodx-dlss5 to the payload root, by name', () => {
-  const script = read(path.join(__dirname, '..', 'scripts', 'collect-payload.js'));
-  assert.match(script, /const addon = await findHostAddon\(source\.dir\);/);
-  assert.match(script, /copyFile\(addon, path\.join\(PAYLOAD, 'renodx-dlss5\.addon64'\)\);/);
-  assert.doesNotMatch(script, /findAddon\(/, 'the first-file-wins lookup is gone');
+test('release configuration does not bundle third-party payload', () => {
+  const pkg = require('../package.json');
+  assert.deepEqual(pkg.build.extraResources, []);
+  assert.equal(pkg.scripts.prebuild, 'node scripts/release-guard.js');
 });
 
 test('multipass comes only from its own route: the hidden per-game switch is gone', () => {

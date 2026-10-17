@@ -4,9 +4,7 @@
 // Multi Frame Generation (Off / x2 / x3 / x4)，并全面执行 7 项联合兼容性、显存预算、Reflex 延迟与备份完整性检查。
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
 const pe = require('./pe');
 const journal = require('./file-journal');
 const apply = require('./apply');
@@ -16,83 +14,14 @@ const { scanGame } = require('./scan');
 const neuralModels = require('./neural-models');
 const mfgManager = require('./mfg-manager');
 
-// 硬件环境缓存（避免每次刷新面板重复调用外部进程）
-let cachedHardwareInfo = null;
-
-function runCmd(file, args, timeout = 8000) {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { windowsHide: true, timeout, maxBuffer: 2 * 1024 * 1024 }, (err, stdout) => {
-      if (err) reject(err);
-      else resolve(String(stdout || '').trim());
-    });
-  });
-}
-
-// 自动检测本机 CPU、内存、GPU、驱动版本、功率上限、显存容量与显示器刷新率
-async function detectHardwareEnvironment(forceRefresh = false) {
-  if (cachedHardwareInfo && !forceRefresh) return cachedHardwareInfo;
-
-  const cpus = os.cpus() || [];
-  const cpuModel = cpus[0] ? cpus[0].model.trim() : 'Unknown CPU';
-  const totalRamGB = Math.round((os.totalmem() / (1024 ** 3)) * 10) / 10;
-
-  let gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU';
-  let driverVersion = '617.42';
-  let vramTotalMB = 8188;
-  let vramUsedMB = 0;
-  let vramFreeMB = 7000;
-  let powerDefaultW = 115;
-  let powerMaxW = 140;
-
-  try {
-    const smiOut = await runCmd('nvidia-smi.exe', [
-      '--query-gpu=name,driver_version,memory.total,memory.used,memory.free,power.default_limit,power.max_limit',
-      '--format=csv,noheader,nounits'
-    ]);
-    const firstLine = smiOut.split(/\r?\n/).find(Boolean);
-    if (firstLine) {
-      const parts = firstLine.split(',').map((s) => s.trim());
-      if (parts[0]) gpuName = parts[0];
-      if (parts[1]) driverVersion = parts[1];
-      if (Number(parts[2]) > 0) vramTotalMB = Number(parts[2]);
-      if (Number(parts[3]) >= 0) vramUsedMB = Number(parts[3]);
-      if (Number(parts[4]) >= 0) vramFreeMB = Number(parts[4]);
-      if (Number(parts[5]) > 0) powerDefaultW = Number(parts[5]);
-      if (Number(parts[6]) > 0) powerMaxW = Number(parts[6]);
-    }
-  } catch {}
-
-  const gpuArch = neuralModels.detectGpuArchitecture(gpuName);
-  cachedHardwareInfo = {
-    os: `Windows 11 64-bit (${os.release()})`,
-    cpu: cpuModel,
-    cpuCores: cpus.length,
-    ramGB: totalRamGB,
-    gpu: {
-      name: gpuName,
-      driver: driverVersion,
-      architecture: gpuArch,
-      vramTotalMB,
-      vramUsedMB,
-      vramFreeMB,
-      powerDefaultW,
-      powerMaxW
-    },
-    display: {
-      resolution: '1920x1080',
-      refreshRateHz: 144,
-      targetFps: 60
-    }
-  };
-  return cachedHardwareInfo;
-}
+const { detectHardwareEnvironment } = require('./hardware-environment');
 
 // 评估在 RTX 4070 Laptop (8GB VRAM, 1080p) 下同时或单独开启 DLSS 5 与 MFG 的显存预算
 function estimateVramBudget({
   neuralMode = 'off',
   neuralModelId = '310.8.SF-v2',
   mfgMode = 'off',
-  vramTotalMB = 8188,
+  vramTotalMB = null,
   resolution = '1920x1080'
 } = {}) {
   const baseGame1080pMB = 5400; // 1080p 现代 DX12 游戏典型显存基准
@@ -108,20 +37,22 @@ function estimateVramBudget({
 
   const totalAddedOverheadMB = neuralOverheadMB + mfgOverheadMB;
   const estimatedTotalMB = baseGame1080pMB + totalAddedOverheadMB;
-  const headroomMB = vramTotalMB - estimatedTotalMB;
-  const usagePercent = Math.min(100, Math.round((estimatedTotalMB / vramTotalMB) * 100));
+  const knownCapacity = Number.isFinite(vramTotalMB) && vramTotalMB > 0;
+  const headroomMB = knownCapacity ? vramTotalMB - estimatedTotalMB : null;
+  const usagePercent = knownCapacity ? Math.round((estimatedTotalMB / vramTotalMB) * 100) : null;
 
-  let level = 'safe'; // 'safe' | 'caution' | 'critical'
-  let summary = `1080p 下预计附加显存开销 +${totalAddedOverheadMB} MiB，总显存占用约 ${estimatedTotalMB}/${vramTotalMB} MiB (${usagePercent}%)，处于 8GB 安全范围内。`;
-  if (headroomMB < 400) {
-    level = 'critical';
-    summary = `警告：DLSS 5 神经渲染 (+${neuralOverheadMB} MiB) 与 MFG ${mfgMode} (+${mfgOverheadMB} MiB) 同时开启将增加约 ${totalAddedOverheadMB} MiB 显存开销，在 8GB 显卡上剩余裕量仅约 ${headroomMB} MiB，高负载场景可能触发显存溢出降速！建议在游戏内开启 DLSS Quality 并将贴图质量设为 High。`;
-  } else if (headroomMB < 1000 && totalAddedOverheadMB > 800) {
-    level = 'caution';
-    summary = `提示：DLSS 5 (+${neuralOverheadMB} MiB) + MFG ${mfgMode} (+${mfgOverheadMB} MiB) 合计增加 +${totalAddedOverheadMB} MiB 显存占用（预计总计 ~${estimatedTotalMB}/${vramTotalMB} MiB）。在 RTX 4070 Laptop 8GB (1080p) 下可稳定运行，但建议配合 DLSS Super Resolution Quality 模式以预留显存缓冲。`;
+  let level = 'unknown';
+  if (knownCapacity && resolution === '1920x1080') {
+    level = headroomMB < 400 ? 'critical' : headroomMB < 1000 ? 'caution' : 'estimated';
   }
+  const summary = '估算，非测量：固定假设游戏基线 5400 MiB，附加开销约 ' + totalAddedOverheadMB +
+    ' MiB。未测当前游戏、贴图、驱动或场景；不能据此保证 8GB 安全或 FPS。' +
+    (!knownCapacity ? ' GPU 容量未知。' : '') +
+    (resolution !== '1920x1080' ? ' 此估算仅适用于 1080p，其他分辨率未建模。' : '');
 
   return {
+    isEstimate: true,
+    evidence: 'unmeasured heuristic',
     resolution,
     vramTotalMB,
     baseGame1080pMB,
@@ -177,7 +108,7 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     ok: true,
     mitigationActive: bamMode === '1' || bamMode === '2' || mfgStatus.currentConfig.backend === 'mfg-unlocker-asi',
     message: bothActive
-      ? 'DLSS 5 神经渲染与 MFG 同时开启：已启用 Boundary Artifact Mitigation (边界伪影缓解) 与 Validated Warp Blend，保护运动矢量与遮挡边缘插值质量。'
+      ? '双模块已配置；边界保护设置不等于实际画质验证，请在游戏内检查运动矢量、HUD 和遮挡伪影。'
       : '未同时激活双模块，无跨阶段运动矢量耦合影响。'
   };
 
@@ -197,19 +128,20 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     neuralMode: neuralStatus.mode,
     neuralModelId: neuralStatus.currentModel?.id || '310.8.SF-v2',
     mfgMode: mfgStatus.currentConfig.mode,
-    vramTotalMB: hardware?.gpu?.vramTotalMB || 8188
+    vramTotalMB: hardware?.gpu?.vramTotalMB ?? null
   });
 
   // 6. Reflex、帧同步和延迟控制是否仍有效
   const hasReflexDll = Boolean(mfgStatus.streamline.reflexPluginVersion) ||
     fs.existsSync(path.join(exeDir, 'sl.reflex.dll'));
   const reflexCheck = {
-    ok: mfgStatus.currentConfig.mode === 'off' || hasReflexDll || Boolean(hardware?.gpu?.architecture?.code === 'ada'),
+    ok: mfgStatus.currentConfig.mode === 'off',
+    runtimeVerified: false,
     hasReflexDll,
     reflexVersion: mfgStatus.streamline.reflexPluginVersion,
     hardwareFlipMetering: Boolean(mfgStatus.gpuSupport.hardwareFlipMetering),
     message: hasReflexDll
-      ? `已检测到 sl.reflex.dll (${mfgStatus.streamline.reflexPluginVersion || '内置'}) 与 Ada 硬件 Flip Metering，帧同步与 Reflex 低延迟控制有效。`
+      ? `已检测到 sl.reflex.dll (${mfgStatus.streamline.reflexPluginVersion || '未知版本'})；文件存在不能证明 Reflex 或帧同步已生效。`
       : '未在游戏目录发现独立 sl.reflex.dll，可随 Streamline 运行时组件一并部署以确保 Reflex 延迟控制生效。'
   };
 
@@ -284,7 +216,7 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir } = {}) 
   if (coExecution.dllConflicts.some((c) => c.severity === 'error') || neuralStatus.overallStatus === 'incompatible') {
     combinedStatus = 'incompatible';
     combinedBadge = '不兼容';
-  } else if (neuralStatus.overallStatus === 'verified' && (mfgStatus. currentConfig.mode === 'off' || mfgStatus.status === 'verified')) {
+  } else if (neuralStatus.mode === 'off' && mfgStatus.status === 'verified') {
     combinedStatus = 'verified';
     combinedBadge = '已验证可用';
   } else if (neuralStatus.installed || mfgStatus.currentConfig.installed) {
@@ -336,6 +268,9 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
 
   const hardware = await detectHardwareEnvironment();
   const gpuName = hardware.gpu.name;
+  if (mfgMode && mfgMode !== 'off' && !mfgManager.evaluateMfgGpuSupport(gpuName, hardware.gpu.driver).nativeX2) {
+    throw Object.assign(new Error('GPU 未检测到或不支持此配置，请刷新硬件检测。'), { code: 'errMfgGpuUnknownOrUnsupported' });
+  }
   const scan = await scanGame(gameDir);
   if (!scan.chosen) throw Object.assign(new Error('未在游戏目录中找到可执行文件'), { code: 'errNoExe' });
   const exePath = scan.chosen.path;
@@ -412,19 +347,6 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
         }
       });
     }
-  } else if (
-    effectivePayloadDir &&
-    (fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')) || fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64'))) &&
-    !fs.existsSync(path.join(exeDir, 'nvngx_dlssnr.dll'))
-  ) {
-    // 若用户仅点击“安装 / 应用 MFG 配置”，但游戏目录中已有 renodx-dlss5.addon64 而缺失 nvngx_dlssnr.dll，自动补齐 nvngx_dlssnr.dll
-    await neuralModels.applyNeuralModelSelection(gameDir, {
-      mode: 'latest_compatible',
-      runtimeStack,
-      payloadDir: effectivePayloadDir,
-      userDataDir,
-      gpuName
-    }, onLog);
   }
 
   // 2. 应用多帧生成设置（若调用方指定了 mfgMode）

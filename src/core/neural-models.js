@@ -48,11 +48,11 @@ const MODEL_DATABASE = Object.freeze([
     parameters: '148M',
     architectures: Object.freeze(['75', '86', '89', '120']),
     smCounts: Object.freeze({ '75': 15, '86': 15, '89': 15, '120': 23 }),
-    bundled: true,
-    rtx40Status: 'verified',
-    rtx40Badge: '已验证可用',
-    sourceType: '隨包内置 (Payload Bundled)',
-    description: '内置多架构兼容版 DLSS 5 神经渲染模型，包含 sm_75/86/89/120 完整 CUDA Fatbin 核函数，在 RTX 4070 Laptop (sm_89) 上经过实测验证可用。'
+    bundled: false,
+    rtx40Status: 'experimental',
+    rtx40Badge: '静态架构匹配，尚未验证',
+    sourceType: '用户提供；来源与许可需核查',
+    description: '内置多架构兼容版 DLSS 5 神经渲染模型，包含 sm_75/86/89/120 完整 CUDA Fatbin 核函数，架构信息仅作参考，不代表运行验证或再分发授权。'
   }),
   Object.freeze({
     id: '310.9.16-oct2026',
@@ -151,8 +151,8 @@ const RUNTIME_STACKS = Object.freeze([
     streamlineVersion: '2.13.0.0',
     feederVersion: '1.17.0',
     renodxVersion: '8.5.0-rc10',
-    status: 'verified',
-    badge: '已验证可用',
+    status: 'experimental',
+    badge: '历史参考栈，尚未验证',
     description: 'v2.2.9 基准验证运行时栈，配备升级版 RenoDX DLSS 5 (v8.5.0-rc10)，与内置 F8 游戏内嵌面板 (Overlay) 二进制指纹完全匹配。'
   }),
   Object.freeze({
@@ -170,23 +170,7 @@ const RUNTIME_STACKS = Object.freeze([
 ]);
 
 function resolvePayloadDir(payloadDir) {
-  const candidates = [
-    payloadDir,
-    process.resourcesPath ? path.join(process.resourcesPath, 'payload') : null,
-    path.resolve(__dirname, '..', '..', 'payload'),
-    path.resolve(__dirname, '..', '..', 'build-output', 'payload'),
-    'E:\\DLSS5-Swapper-Enhanced\\payload',
-    'E:\\DLSS5-Swapper-Enhanced\\build-output\\payload'
-  ].filter(Boolean);
-  for (const dir of candidates) {
-    try {
-      if (fs.existsSync(path.join(dir, 'streamline', 'nvngx_dlssnr.dll')) ||
-          fs.existsSync(path.join(dir, 'renodx-dlss5.addon64'))) {
-        return dir;
-      }
-    } catch {}
-  }
-  return payloadDir || path.resolve(__dirname, '..', '..', 'payload');
+  return payloadDir || process.env.DLSS5_ENHANCED_PAYLOAD_DIR || path.resolve(__dirname, '..', '..', 'payload');
 }
 
 // 扫描二进制缓冲区中的 CUDA Fatbin (0xBA55ED50) 容器，提取内嵌的 SM 架构与核函数计数
@@ -362,7 +346,7 @@ function inspectNeuralModelBinary(filePath) {
 }
 
 // 评估模型与当前 GPU 的兼容性状态，返回明确的徽章与解释
-function evaluateModelGpuCompatibility(modelOrInspection, gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU') {
+function evaluateModelGpuCompatibility(modelOrInspection, gpuName = 'Unknown GPU') {
   const gpu = detectGpuArchitecture(gpuName);
   const archs = Array.isArray(modelOrInspection?.architectures) ? modelOrInspection.architectures : [];
   const modelId = modelOrInspection?.id || modelOrInspection?.modelId || '';
@@ -390,22 +374,14 @@ function evaluateModelGpuCompatibility(modelOrInspection, gpuName = 'NVIDIA GeFo
   }
 
   // 如果包含当前 GPU 的 SM 架构
-  if (sha256 === '8270b350cd82de5ce89806872cdd6b6a9249b80836b91bbeb3573470744cc206' || modelId === '310.8.SF-v2') {
-    return {
-      compatible: true,
-      status: 'verified',
-      badge: '已验证可用',
-      gpu,
-      reason: `模型内嵌 sm_${gpu.sm} (${gpu.family}) CUDA Fatbin 核函数 (${modelOrInspection?.smCounts?.[gpu.sm] || 15} 个模块)，已在 ${gpuName} 上通过验证。`
-    };
-  }
+
 
   return {
     compatible: true,
     status: 'experimental',
     badge: '实验性支持',
     gpu,
-    reason: `模型包含 sm_${gpu.sm} (${gpu.family}) CUDA Fatbin 核函数，支持在 ${gpuName} 上运行（实验性构建）。`
+    reason: `模型包含 sm_${gpu.sm} (${gpu.family}) CUDA 核函数，仅通过静态架构检查；当前游戏运行尚未验证。`
   };
 }
 
@@ -433,7 +409,7 @@ function writeCustomModelsIndex(userDataDir, rows) {
 }
 
 // 列出所有已知与可用的 DLSS 5 神经渲染模型（合并内置 payload、数据库条目与用户合法导入的模型）
-function listNeuralModels({ payloadDir, userDataDir, gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU' } = {}) {
+function listNeuralModels({ payloadDir, userDataDir, gpuName = 'Unknown GPU' } = {}) {
   const effectivePayloadDir = resolvePayloadDir(payloadDir);
   const bundledPath = effectivePayloadDir ? path.join(effectivePayloadDir, 'streamline', 'nvngx_dlssnr.dll') : null;
   const bundledInspection = bundledPath && fs.existsSync(bundledPath) ? inspectNeuralModelBinary(bundledPath) : null;
@@ -586,7 +562,7 @@ function parseNeuralRuntimeLogs(gameDir, exeDir) {
 }
 
 // 检查指定游戏目录的 DLSS 5 神经渲染完整状态、模型版本、依赖项与 GPU 兼容性
-async function inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU' } = {}) {
+async function inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuName = 'Unknown GPU' } = {}) {
   const effectivePayloadDir = resolvePayloadDir(payloadDir);
   const scan = await scanGame(gameDir);
   const exePath = scan.chosen ? scan.chosen.path : null;
@@ -655,7 +631,7 @@ async function inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuNa
   // 综合状态徽章
   let overallStatus = 'untested';
   let overallBadge = '尚未测试';
-  if (logs.hasErrors || !gpuCompat.compatible) {
+  if (logs.hasErrors || gpuCompat.status === 'incompatible') {
     overallStatus = 'incompatible';
     overallBadge = '不兼容';
   } else if (activeModelInfo && activeModelInfo.valid && dependencies.missing.length === 0) {
@@ -706,7 +682,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     runtimeStack = null, // 'baseline-310.9.1' | 'oct2026-310.9.16'
     payloadDir,
     userDataDir,
-    gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU'
+    gpuName = 'Unknown GPU'
   } = options;
   const effectivePayloadDir = resolvePayloadDir(payloadDir);
 

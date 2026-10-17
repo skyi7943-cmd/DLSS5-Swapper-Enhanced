@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const DEFAULT_API = 'https://5.rakanki.com';
+const DEFAULT_API = ''; // No inherited community service.
 const ADMIN_TOKEN_PATTERN = /^dlss5_admin_[A-Za-z0-9_-]{43}$/;
 
 function validState(value) {
@@ -41,6 +41,7 @@ class CommunityClient {
   }
 
   async request(method, pathname, { body, etag, write = false, adminToken = null } = {}) {
+    if (!this.baseUrl) throw Object.assign(new Error('This fork has no configured community service.'), { code: 'community_disabled' });
     const headers = { accept: 'application/json' };
     if (body !== undefined) headers['content-type'] = 'application/json';
     if (etag) headers['if-none-match'] = etag;
@@ -313,7 +314,7 @@ class CommunityClient {
     const target = new URL(reservation.uploadUrl);
     const localDevelopment = /^(127\.0\.0\.1|localhost)$/.test(new URL(this.baseUrl).hostname);
     if (target.protocol !== 'https:' && !localDevelopment) throw Object.assign(new Error('Unsafe media upload address.'), { code: 'media_address' });
-    if (!localDevelopment && !(target.hostname === 'media.rakanki.com' && /^\/upload\/[A-Za-z0-9_-]{32}$/.test(target.pathname))) {
+    if (!localDevelopment && !(target.origin === new URL(this.baseUrl).origin && /^\/upload\/[A-Za-z0-9_-]{32}$/.test(target.pathname))) {
       throw Object.assign(new Error('Unexpected media upload address.'), { code: 'media_address' });
     }
     let response;

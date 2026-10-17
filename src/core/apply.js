@@ -638,24 +638,7 @@ async function applyFeeder(config, log) {
 // Keeps ReShade from starting with our add-on switched off, and clears stale
 // multi-pass NRPasses>1 left behind by an earlier renodx-dlss.addon64 run.
 async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
-  // 自动同步部署游戏内 Home 菜单全量简体中文化插件 dlss5-zh-cn.addon64
-  try {
-    const tmpRoot = path.resolve(require('os').tmpdir()).toLowerCase();
-    const normExeDir = path.resolve(exeDir).toLowerCase();
-    if (!normExeDir.startsWith(tmpRoot)) {
-      const zhCandidates = [
-        path.resolve(__dirname, '..', '..', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64'),
-        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
-        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
-        'E:\\DLSS5-Swapper-Enhanced\\payload\\enhanced\\zh-cn\\dlss5-zh-cn.addon64'
-      ].filter(Boolean);
-      const zhSrc = zhCandidates.find((p) => fs.existsSync(p));
-      if (zhSrc && fs.existsSync(exeDir)) {
-        await copyOver(zhSrc, path.join(exeDir, 'dlss5-zh-cn.addon64'));
-      }
-    }
-  } catch {}
-
+  // Additional add-ons must be explicitly selected; never search developer paths.
   const ini = path.join(exeDir, 'ReShade.ini');
   if (!fs.existsSync(ini)) return;
   let text = fs.readFileSync(ini, 'utf8');
