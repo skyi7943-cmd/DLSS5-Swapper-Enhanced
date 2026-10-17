@@ -80,7 +80,7 @@ npm test
 npm run build:portable
 ```
 
-所有构建入口执行发布输入检查，发布模式禁用自动上传；便携 EXE 具有独立产品名、appId 和解包目录。CI 在 Windows 上跑测试和无载荷构建，不发布二进制。构建成功不等于签名验证、游戏注入成功或游戏 FPS 实测。
+所有构建入口执行发布输入检查，发布模式禁用自动上传；便携 EXE 具有独立产品名、appId 和解包目录。按维护者要求，不配置或继续运行自动测试/云端构建。构建成功不等于签名验证、游戏注入成功或游戏 FPS 实测。
 
 默认不检查程序在线更新；手动更新只前往[本仓库 Releases](https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/releases)。旧作者社区服务默认禁用；管理员只有明确配置 `DLSS5_ENHANCED_COMMUNITY_API` 时才会连接自建服务，媒体仅允许同源，CSP 未开放自建远程图片域名。不要把旧服务密钥或用户数据自动迁移到此 fork。
 

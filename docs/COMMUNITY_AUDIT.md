@@ -1,6 +1,6 @@
 # Community fork audit — 2026-10-18
 
-Scope: source at `fbe5d03a38c1582b4a475db8e851b087b4f3ac08`, plus this PR. This is a code, packaging and evidence review, not certification of game performance or an assurance against takedowns. Execution was on the available Windows desktop runner. No callable ChatGPT Work cloud terminal was exposed; a Windows GitHub Actions workflow is included for cloud validation.
+Scope: source at `fbe5d03a38c1582b4a475db8e851b087b4f3ac08`, plus this PR. This is a code, packaging and evidence review, not certification of game performance or an assurance against takedowns. Execution was on the available Windows desktop runner. No callable ChatGPT Work cloud terminal was exposed; automatic cloud validation was subsequently removed at the maintainer's request; no further tests or builds will be run.
 
 ## Findings and changes
 
@@ -35,7 +35,9 @@ This checkout tracks no `.exe`, `.dll`, `.asi`, `.addon64` or model/archive runt
 
 New builds omit NVIDIA runtimes/models, Streamline, ReShade, Feeder, RenoDX and MFG plug-ins. Official external sources and user-owned local import layout are documented. Missing components disable the relevant routes rather than being secretly supplied by a release packager. Optional upstream component downloaders retain their own licenses and source obligations; this review does not certify every file in every external archive.
 
-## Validation
+## Validation already performed (no further runs requested)
+
+The added GitHub Actions workflow was removed at the maintainer’s request. Earlier cloud attempts failed and are not claimed as successful validation. Local historical results below are retained only as records.
 
 - Node test suite: **325 tests, 319 passed, 6 skipped, 0 failed** after the fork changes; final run recorded in the PR if a later run differs.
 - Four skipped integration tests require an explicitly supplied private payload (`DLSS5_ENHANCED_TEST_PAYLOAD`); two pre-existing platform/runtime skips remain. They were not counted as successful runtime or game tests.
