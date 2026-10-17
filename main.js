@@ -1998,7 +1998,17 @@ const mfgManager = require('./src/core/mfg-manager');
 const combinedManager = require('./src/core/combined-manager');
 
 function resolvePayloadRoot() {
-  for (const dir of [path.join(process.resourcesPath || '', 'payload'), path.join(__dirname, 'payload')]) {
+  const candidates = [
+    path.join(process.resourcesPath || '', 'payload'),
+    path.join(__dirname, 'payload'),
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload') : null,
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload') : null,
+    'E:\\DLSS5-Swapper-Enhanced\\payload'
+  ].filter(Boolean);
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'enhanced', 'mfg', 'renodx-mfgunlock.addon64'))) return dir;
+  }
+  for (const dir of candidates) {
     if (fs.existsSync(dir)) return dir;
   }
   return path.join(__dirname, 'payload');

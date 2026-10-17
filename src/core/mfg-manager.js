@@ -600,11 +600,18 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       ? (isOptiRoute ? 'mfg-unlocker-asi' : 'renodx-mfgunlock')
       : backend;
 
-    // 1. 确保游戏具备支持 x2/x3/x4 的正版 nvngx_dlssg.dll (310.9.1 或 310.9.16)
-    if (upgradeDlssg && payloadDir) {
+    // 1. 确保游戏具备支持 x2/x3/x4 的正版 nvngx_dlssg.dll (310.9.1 或 310.9.16) 及匹配的 sl.dlss_g.dll (2.14.16)
+    const effectivePayloadDir = [
+      payloadDir,
+      process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload') : null,
+      process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload') : null,
+      'E:\\DLSS5-Swapper-Enhanced\\payload'
+    ].find((d) => d && fs.existsSync(path.join(d, MFG_UNLOCKERS.renodxAddon.relPath))) || payloadDir;
+
+    if (upgradeDlssg && effectivePayloadDir) {
       const srcDlssg = runtimeStack === 'oct2026-310.9.16'
-        ? path.join(payloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlssg.dll')
-        : path.join(payloadDir, 'streamline', 'nvngx_dlssg.dll');
+        ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlssg.dll')
+        : path.join(effectivePayloadDir, 'streamline', 'nvngx_dlssg.dll');
 
       if (fs.existsSync(srcDlssg)) {
         const dlssgTargets = scan.dlssFiles
@@ -623,11 +630,30 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
           });
         }
       }
+
+      // 实机验证证明：将 sl.dlss_g.dll 同步升级至 2.14.16.0 可激活完整 Dynamic MFG (ngxEvaluateCalls 真实插帧)
+      const srcSlDlssg = runtimeStack === 'oct2026-310.9.16'
+        ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'sl.dlss_g.dll')
+        : path.join(effectivePayloadDir, 'streamline', 'sl.dlss_g.dll');
+      if (fs.existsSync(srcSlDlssg)) {
+        const slDlssgTargets = scan.streamlineFiles
+          .filter((f) => /^sl\.dlss_g\.dll$/i.test(f.name))
+          .map((f) => f.path);
+        if (!slDlssgTargets.length && fs.existsSync(path.join(exeDir, 'sl.dlss_g.dll'))) {
+          slDlssgTargets.push(path.join(exeDir, 'sl.dlss_g.dll'));
+        }
+        for (const dest of slDlssgTargets) {
+          await apply.copyTracked(manifest, gameDir, srcSlDlssg, dest, {
+            kind: 'streamline',
+            newVersion: pe.getFileVersion(srcSlDlssg)
+          });
+        }
+      }
     }
 
     // 2. 根据所选后端部署 MFG 解锁器与配置文件
     if (selectedBackend === 'renodx-mfgunlock') {
-      const srcAddon = payloadDir ? path.join(payloadDir, MFG_UNLOCKERS.renodxAddon.relPath) : null;
+      const srcAddon = effectivePayloadDir ? path.join(effectivePayloadDir, MFG_UNLOCKERS.renodxAddon.relPath) : null;
       if (!srcAddon || !fs.existsSync(srcAddon)) {
         throw Object.assign(new Error('未找到内置 renodx-mfgunlock.addon64 组件载荷'), { code: 'errMfgPayloadMissing' });
       }
@@ -648,7 +674,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       // 确保 ReShade (Addon 支持版) 已安装在游戏目录
       const reshadeCheck = scan.reshade;
       if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
-        const bundledReshade = payloadDir ? path.join(payloadDir, 'reshade-vulkan', 'ReShade64.dll') : null;
+        const bundledReshade = effectivePayloadDir ? path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll') : null;
         if (bundledReshade && fs.existsSync(bundledReshade)) {
           const hookFile = path.join(exeDir, 'dxgi.dll');
           const hookExisted = fs.existsSync(hookFile);
@@ -664,7 +690,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         kind: 'addon',
         newVersion: MFG_UNLOCKERS.renodxAddon.version
       });
-      const licenseSrc = payloadDir ? path.join(payloadDir, 'enhanced', 'mfg', 'licenses', 'MFGAdaUnlock-RenoDx-LICENSE.txt') : null;
+      const licenseSrc = effectivePayloadDir ? path.join(effectivePayloadDir, 'enhanced', 'mfg', 'licenses', 'MFGAdaUnlock-RenoDx-LICENSE.txt') : null;
       if (licenseSrc && fs.existsSync(licenseSrc)) {
         await apply.copyTracked(manifest, gameDir, licenseSrc, path.join(exeDir, 'MFGAdaUnlock-RenoDx-LICENSE.txt'), { kind: 'license' });
       }
@@ -694,7 +720,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       onLog({ code: 'mfgConfigured', params: { backend: 'renodx-mfgunlock', mode, multiplier } });
     } else {
       // 部署 MFG-Unlocker (OptiScaler ASI 插件模式)
-      const srcAsi = payloadDir ? path.join(payloadDir, MFG_UNLOCKERS.asiPlugin.relPath) : null;
+      const srcAsi = effectivePayloadDir ? path.join(effectivePayloadDir, MFG_UNLOCKERS.asiPlugin.relPath) : null;
       if (!srcAsi || !fs.existsSync(srcAsi)) {
         throw Object.assign(new Error('未找到内置 MFGUnlocker.dll 组件载荷'), { code: 'errMfgPayloadMissing' });
       }
@@ -712,7 +738,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         kind: 'optiscaler-plugin',
         newVersion: MFG_UNLOCKERS.asiPlugin.version
       });
-      const licenseSrc = payloadDir ? path.join(payloadDir, 'enhanced', 'mfg', 'licenses', 'MFG-Unlocker-LICENSE.txt') : null;
+      const licenseSrc = effectivePayloadDir ? path.join(effectivePayloadDir, 'enhanced', 'mfg', 'licenses', 'MFG-Unlocker-LICENSE.txt') : null;
       if (licenseSrc && fs.existsSync(licenseSrc)) {
         await apply.copyTracked(manifest, gameDir, licenseSrc, path.join(exeDir, 'OptiScaler', 'licenses', 'MFG-Unlocker-LICENSE.txt'), { kind: 'license' });
       }

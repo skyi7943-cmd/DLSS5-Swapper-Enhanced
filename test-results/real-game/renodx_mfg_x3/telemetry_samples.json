@@ -1,0 +1,156 @@
+﻿[
+    {
+        "ElapsedSec":  5,
+        "GpuSmi":  "2026/10/17 20:24:30.699, 1248, 9, 2.91, 210",
+        "LastMfgLogs":  [
+                            "20:24:29:380 [39852] | INFO  | Unloading add-on \"MFG Unlock\" ...",
+                            "20:24:29:388 [39852] | INFO  | Loading externally registered add-on \"MFG Unlock\" ...",
+                            "20:24:29:434 [39852] | INFO  | Unloading add-on \"MFG Unlock\" ...",
+                            "20:24:29:830 [39852] | INFO  | Loading externally registered add-on \"MFG Unlock\" ...",
+                            "20:24:30:474 [39852] | INFO  | [MFG Unlock] mfgunlock: ReShade initialized a Direct3D 12 device."
+                        ]
+    },
+    {
+        "ElapsedSec":  10,
+        "GpuSmi":  "2026/10/17 20:24:35.810, 1478, 1, 16.90, 1980",
+        "LastMfgLogs":  [
+                            "20:24:32:729 [39852] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGGetState; native multiplier-menu override is live.",
+                            "20:24:32:730 [39852] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState runtime status is 0x0 (OK).",
+                            "20:24:32:730 [39852] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 0 frame(s) actually presented since its previous call.",
+                            "20:24:32:730 [39852] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState confirms NVIDIA Dynamic MFG support.",
+                            "20:24:32:730 [39852] | INFO  | [MFG Unlock] mfgunlock: the active DLSS-G runtime reports VSync support available."
+                        ]
+    },
+    {
+        "ElapsedSec":  15,
+        "GpuSmi":  "2026/10/17 20:24:40.921, 2341, 37, 7.58, 435",
+        "LastMfgLogs":  [
+                            "20:24:32:730 [39852] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState confirms NVIDIA Dynamic MFG support.",
+                            "20:24:32:730 [39852] | INFO  | [MFG Unlock] mfgunlock: the active DLSS-G runtime reports VSync support available.",
+                            "20:24:37:399 [39852] | INFO  | [MFG Unlock] mfgunlock: ReShade initialized a Direct3D 11 device.",
+                            "20:24:39:499 [39852] | INFO  | [MFG Unlock] mfgunlock: wrapped slReflexSleep; native fast path and opt-in DXGI pacing are available.",
+                            "20:24:39:986 [11440] | INFO  | [MFG Unlock] mfgunlock: wrapped slReflexSetOptions; the optional output-FPS cap is available."
+                        ]
+    },
+    {
+        "ElapsedSec":  20,
+        "GpuSmi":  "2026/10/17 20:24:46.034, 3061, 11, 17.62, 1980",
+        "LastMfgLogs":  [
+                            "20:24:32:730 [39852] | INFO  | [MFG Unlock] mfgunlock: the active DLSS-G runtime reports VSync support available.",
+                            "20:24:37:399 [39852] | INFO  | [MFG Unlock] mfgunlock: ReShade initialized a Direct3D 11 device.",
+                            "20:24:39:499 [39852] | INFO  | [MFG Unlock] mfgunlock: wrapped slReflexSleep; native fast path and opt-in DXGI pacing are available.",
+                            "20:24:39:986 [11440] | INFO  | [MFG Unlock] mfgunlock: wrapped slReflexSetOptions; the optional output-FPS cap is available.",
+                            "20:24:41:010 [26656] | INFO  | [MFG Unlock] mfgunlock: bounded startup discovery completed; no Present polling is active."
+                        ]
+    },
+    {
+        "ElapsedSec":  25,
+        "GpuSmi":  "2026/10/17 20:24:51.135, 3908, 80, 81.46, 2400",
+        "LastMfgLogs":  [
+                            "20:24:41:010 [26656] | INFO  | [MFG Unlock] mfgunlock: bounded startup discovery completed; no Present polling is active.",
+                            "20:24:47:613 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: overriding DLSS-G numFramesToGenerate from 1 (2x) to 2 (3x). slDLSSGSetOptions accepted it.",
+                            "20:24:48:137 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call."
+                        ]
+    },
+    {
+        "ElapsedSec":  30,
+        "GpuSmi":  "2026/10/17 20:24:56.216, 3957, 97, 93.17, 2400",
+        "LastMfgLogs":  [
+                            "20:24:41:010 [26656] | INFO  | [MFG Unlock] mfgunlock: bounded startup discovery completed; no Present polling is active.",
+                            "20:24:47:613 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: overriding DLSS-G numFramesToGenerate from 1 (2x) to 2 (3x). slDLSSGSetOptions accepted it.",
+                            "20:24:48:137 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call."
+                        ]
+    },
+    {
+        "ElapsedSec":  35,
+        "GpuSmi":  "2026/10/17 20:25:01.285, 3958, 98, 92.47, 2400",
+        "LastMfgLogs":  [
+                            "20:24:41:010 [26656] | INFO  | [MFG Unlock] mfgunlock: bounded startup discovery completed; no Present polling is active.",
+                            "20:24:47:613 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: overriding DLSS-G numFramesToGenerate from 1 (2x) to 2 (3x). slDLSSGSetOptions accepted it.",
+                            "20:24:48:137 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call."
+                        ]
+    },
+    {
+        "ElapsedSec":  40,
+        "GpuSmi":  "2026/10/17 20:25:06.373, 3929, 97, 97.48, 2400",
+        "LastMfgLogs":  [
+                            "20:24:41:010 [26656] | INFO  | [MFG Unlock] mfgunlock: bounded startup discovery completed; no Present polling is active.",
+                            "20:24:47:613 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: overriding DLSS-G numFramesToGenerate from 1 (2x) to 2 (3x). slDLSSGSetOptions accepted it.",
+                            "20:24:48:137 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call."
+                        ]
+    },
+    {
+        "ElapsedSec":  45,
+        "GpuSmi":  "2026/10/17 20:25:11.450, 3932, 97, 97.88, 2400",
+        "LastMfgLogs":  [
+                            "20:24:41:010 [26656] | INFO  | [MFG Unlock] mfgunlock: bounded startup discovery completed; no Present polling is active.",
+                            "20:24:47:613 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: overriding DLSS-G numFramesToGenerate from 1 (2x) to 2 (3x). slDLSSGSetOptions accepted it.",
+                            "20:24:48:137 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call."
+                        ]
+    },
+    {
+        "ElapsedSec":  50,
+        "GpuSmi":  "2026/10/17 20:25:16.530, 3929, 96, 98.46, 2400",
+        "LastMfgLogs":  [
+                            "20:24:41:010 [26656] | INFO  | [MFG Unlock] mfgunlock: bounded startup discovery completed; no Present polling is active.",
+                            "20:24:47:613 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: overriding DLSS-G numFramesToGenerate from 1 (2x) to 2 (3x). slDLSSGSetOptions accepted it.",
+                            "20:24:48:137 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call."
+                        ]
+    },
+    {
+        "ElapsedSec":  55,
+        "GpuSmi":  "2026/10/17 20:25:21.600, 3932, 97, 97.80, 2400",
+        "LastMfgLogs":  [
+                            "20:24:41:010 [26656] | INFO  | [MFG Unlock] mfgunlock: bounded startup discovery completed; no Present polling is active.",
+                            "20:24:47:613 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: overriding DLSS-G numFramesToGenerate from 1 (2x) to 2 (3x). slDLSSGSetOptions accepted it.",
+                            "20:24:48:137 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call."
+                        ]
+    },
+    {
+        "ElapsedSec":  60,
+        "GpuSmi":  "2026/10/17 20:25:26.668, 3929, 98, 96.34, 2385",
+        "LastMfgLogs":  [
+                            "20:24:41:010 [26656] | INFO  | [MFG Unlock] mfgunlock: bounded startup discovery completed; no Present polling is active.",
+                            "20:24:47:613 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: overriding DLSS-G numFramesToGenerate from 1 (2x) to 2 (3x). slDLSSGSetOptions accepted it.",
+                            "20:24:48:137 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call."
+                        ]
+    },
+    {
+        "ElapsedSec":  65,
+        "GpuSmi":  "2026/10/17 20:25:31.767, 3932, 98, 95.75, 2280",
+        "LastMfgLogs":  [
+                            "20:24:41:010 [26656] | INFO  | [MFG Unlock] mfgunlock: bounded startup discovery completed; no Present polling is active.",
+                            "20:24:47:613 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: overriding DLSS-G numFramesToGenerate from 1 (2x) to 2 (3x). slDLSSGSetOptions accepted it.",
+                            "20:24:48:137 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call."
+                        ]
+    },
+    {
+        "ElapsedSec":  70,
+        "GpuSmi":  "2026/10/17 20:25:36.831, 3929, 90, 94.13, 2400",
+        "LastMfgLogs":  [
+                            "20:24:47:613 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: wrapped slDLSSGSetOptions; frame-multiplier override is live.",
+                            "20:24:47:616 [31380] | INFO  | [MFG Unlock] mfgunlock: overriding DLSS-G numFramesToGenerate from 1 (2x) to 2 (3x). slDLSSGSetOptions accepted it.",
+                            "20:24:48:137 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call.",
+                            "20:25:32:612 [31380] | INFO  | [MFG Unlock] mfgunlock: slDLSSGGetState reports 1 frame(s) actually presented since its previous call."
+                        ]
+    }
+]

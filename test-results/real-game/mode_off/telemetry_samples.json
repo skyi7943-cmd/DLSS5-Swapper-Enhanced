@@ -1,0 +1,182 @@
+﻿[
+    {
+        "ElapsedSec":  5,
+        "GpuSmi":  "2026/10/17 20:09:23.357, 1501, 0, 2.17, 210",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  0,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  10,
+        "GpuSmi":  "2026/10/17 20:09:28.471, 1733, 0, 16.02, 1980",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  0,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  15,
+        "GpuSmi":  "2026/10/17 20:09:33.560, 1924, 2, 15.46, 570",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  0,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  20,
+        "GpuSmi":  "2026/10/17 20:09:38.655, 2343, 26, 7.01, 510",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  0,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  25,
+        "GpuSmi":  "2026/10/17 20:09:43.741, 3717, 81, 36.96, 2415",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  30,
+        "GpuSmi":  "2026/10/17 20:09:48.811, 3728, 97, 95.81, 2400",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  35,
+        "GpuSmi":  "2026/10/17 20:09:53.883, 3729, 97, 96.34, 2400",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  40,
+        "GpuSmi":  "2026/10/17 20:09:58.949, 3729, 97, 98.23, 2400",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  45,
+        "GpuSmi":  "2026/10/17 20:10:04.032, 3729, 97, 111.47, 2400",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  50,
+        "GpuSmi":  "2026/10/17 20:10:09.095, 3729, 97, 98.91, 2400",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  55,
+        "GpuSmi":  "2026/10/17 20:10:14.168, 3729, 97, 99.96, 2400",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  60,
+        "GpuSmi":  "2026/10/17 20:10:19.230, 3729, 97, 100.35, 2400",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  65,
+        "GpuSmi":  "2026/10/17 20:10:24.297, 3729, 97, 100.80, 2400",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  70,
+        "GpuSmi":  "2026/10/17 20:10:29.389, 3729, 97, 99.39, 2400",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  75,
+        "GpuSmi":  "2026/10/17 20:10:34.455, 3729, 98, 93.89, 2385",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  80,
+        "GpuSmi":  "2026/10/17 20:10:39.569, 3729, 97, 99.54, 2385",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  85,
+        "GpuSmi":  "2026/10/17 20:10:44.653, 3729, 97, 95.86, 2295",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    },
+    {
+        "ElapsedSec":  90,
+        "GpuSmi":  "2026/10/17 20:10:49.748, 3729, 97, 95.66, 2190",
+        "RealFps":  0,
+        "DlssFps":  0,
+        "ActualFramesPresented":  1,
+        "GameFgOn":  false,
+        "AppliedMultiplier":  0,
+        "NgxEvaluateCalls":  0
+    }
+]

@@ -1,0 +1,7 @@
+﻿{
+    "selectiveOtaDlssgWrapper":  true,
+    "intervalLogging":  true,
+    "multiplier":  2,
+    "followGame":  false,
+    "mode":  "fixed"
+}

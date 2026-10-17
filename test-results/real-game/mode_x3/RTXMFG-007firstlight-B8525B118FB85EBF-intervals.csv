@@ -1,0 +1,2 @@
+# NGX temporal-request trace. requestedPosition=index/(count+1). normalizedInterval=1/(count+1). submitDeltaUs is CPU time between Evaluate entries, not final-display timing or proof of unique images.
+sequence,qpc,submitDeltaUs,threadId,handle,frameIdResult,frameId,countResult,count,indexResult,index,maximumResult,maximum,requestedPosition,normalizedInterval,outputResult,output,descriptorReady,readException

@@ -1,0 +1,119 @@
+﻿[
+    {
+        "ElapsedSec":  5,
+        "ProcessRunning":  true,
+        "GpuSmi":  "2026/10/17 20:30:11.283, 1269, 9, 3.22, 210",
+        "LastNrLogs":  [
+                           "20:30:10:859 [32632] | DEBUG | [DLSS 5 Neural Rendering] vtable::Hook(NVSDK_NGX_D3D12_CreateFeaturehooked with 0x00007ffb7ad47740 =\u003e 0x00007ffbcf924060 (0x00007ffb7ad47740 ) (0x00007ffbcf9ef2f0))",
+                           "20:30:10:859 [32632] | DEBUG | [DLSS 5 Neural Rendering] vtable::Hook(NVSDK_NGX_D3D12_EvaluateFeaturehooked with 0x00007ffb7ad478b0 =\u003e 0x00007ffbcf92c3a0 (0x00007ffb7ad478b0 ) (0x00007ffbcf9ef2f8))",
+                           "20:30:10:859 [32632] | DEBUG | [DLSS 5 Neural Rendering] vtable::Hook(Export not present: NVSDK_NGX_D3D12_EvaluateFeature_C)",
+                           "20:30:10:859 [32632] | DEBUG | [DLSS 5 Neural Rendering] vtable::Hook(NVSDK_NGX_D3D12_ReleaseFeaturehooked with 0x00007ffb7ad47b90 =\u003e 0x00007ffbcf9308d0 (0x00007ffb7ad47b90 ) (0x00007ffbcf9ef308))",
+                           "20:30:10:859 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: detoured NGX module copy [2] D:\\steam\\steamapps\\common\\007 First Light\\Retail\\nvngx_dlssd.dll",
+                           "20:30:10:859 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: D3D12 NGX hooks installed across 3 module copy(ies); inline DLSS contract capture armed"
+                       ]
+    },
+    {
+        "ElapsedSec":  10,
+        "ProcessRunning":  true,
+        "GpuSmi":  "2026/10/17 20:30:16.366, 1500, 3, 13.55, 480",
+        "LastNrLogs":  [
+                           "20:30:10:859 [32632] | DEBUG | [DLSS 5 Neural Rendering] vtable::Hook(Export not present: NVSDK_NGX_D3D12_EvaluateFeature_C)",
+                           "20:30:10:859 [32632] | DEBUG | [DLSS 5 Neural Rendering] vtable::Hook(NVSDK_NGX_D3D12_ReleaseFeaturehooked with 0x00007ffb7ad47b90 =\u003e 0x00007ffbcf9308d0 (0x00007ffb7ad47b90 ) (0x00007ffbcf9ef308))",
+                           "20:30:10:859 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: detoured NGX module copy [2] D:\\steam\\steamapps\\common\\007 First Light\\Retail\\nvngx_dlssd.dll",
+                           "20:30:10:859 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: D3D12 NGX hooks installed across 3 module copy(ies); inline DLSS contract capture armed",
+                           "20:30:11:448 [32632] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: signed runtime sha256 8270B350CD82DE5CE89806872CDD6B6A9249B80836B91BBEB3573470744CC206 (custom runtime accepted; untested build, NR failures may be specific to it)",
+                           "20:30:11:448 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: signed NR runtime (nvngx_dlssnr.dll) pre-loaded at device init"
+                       ]
+    },
+    {
+        "ElapsedSec":  15,
+        "ProcessRunning":  true,
+        "GpuSmi":  "2026/10/17 20:30:21.452, 2317, 3, 13.61, 1980",
+        "LastNrLogs":  [
+                           "20:30:10:859 [32632] | DEBUG | [DLSS 5 Neural Rendering] vtable::Hook(NVSDK_NGX_D3D12_ReleaseFeaturehooked with 0x00007ffb7ad47b90 =\u003e 0x00007ffbcf9308d0 (0x00007ffb7ad47b90 ) (0x00007ffbcf9ef308))",
+                           "20:30:10:859 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: detoured NGX module copy [2] D:\\steam\\steamapps\\common\\007 First Light\\Retail\\nvngx_dlssd.dll",
+                           "20:30:10:859 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: D3D12 NGX hooks installed across 3 module copy(ies); inline DLSS contract capture armed",
+                           "20:30:11:448 [32632] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: signed runtime sha256 8270B350CD82DE5CE89806872CDD6B6A9249B80836B91BBEB3573470744CC206 (custom runtime accepted; untested build, NR failures may be specific to it)",
+                           "20:30:11:448 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: signed NR runtime (nvngx_dlssnr.dll) pre-loaded at device init",
+                           "20:30:21:092 [16736] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: queue completion tracker installed on the D3D12 command queue (post-submit signal fences drive resource retirement)"
+                       ]
+    },
+    {
+        "ElapsedSec":  20,
+        "ProcessRunning":  true,
+        "GpuSmi":  "2026/10/17 20:30:26.558, 2836, 25, 13.15, 1260",
+        "LastNrLogs":  [
+                           "20:30:10:859 [32632] | DEBUG | [DLSS 5 Neural Rendering] vtable::Hook(NVSDK_NGX_D3D12_ReleaseFeaturehooked with 0x00007ffb7ad47b90 =\u003e 0x00007ffbcf9308d0 (0x00007ffb7ad47b90 ) (0x00007ffbcf9ef308))",
+                           "20:30:10:859 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: detoured NGX module copy [2] D:\\steam\\steamapps\\common\\007 First Light\\Retail\\nvngx_dlssd.dll",
+                           "20:30:10:859 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: D3D12 NGX hooks installed across 3 module copy(ies); inline DLSS contract capture armed",
+                           "20:30:11:448 [32632] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: signed runtime sha256 8270B350CD82DE5CE89806872CDD6B6A9249B80836B91BBEB3573470744CC206 (custom runtime accepted; untested build, NR failures may be specific to it)",
+                           "20:30:11:448 [32632] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: signed NR runtime (nvngx_dlssnr.dll) pre-loaded at device init",
+                           "20:30:21:092 [16736] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: queue completion tracker installed on the D3D12 command queue (post-submit signal fences drive resource retirement)"
+                       ]
+    },
+    {
+        "ElapsedSec":  25,
+        "ProcessRunning":  true,
+        "GpuSmi":  "2026/10/17 20:30:31.663, 3513, 0, 3.14, 210",
+        "LastNrLogs":  [
+                           "20:30:28:689 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: NGX feature create returned: feature=1 (DLSS/DLAA), result=1 (success), handle=0x1c0e678530",
+                           "20:30:28:690 [38852] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: present events starved while NGX evaluates continue; driving the per-frame lifecycle (hotkeys, captures, retirement) from NGX evaluate ticks",
+                           "20:30:28:690 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: first NGX evaluate intercepted (slot=0)",
+                           "20:30:28:691 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: compute-state shadow installed on the D3D12 command list vtable (Reset, ClearState, SetPipelineState, SetDescriptorHeaps, SetComputeRootSignature, root descriptor tables, root constants plural, root CBV/SRV/UAV; no Release detour and no list-destruction event - v6audit2 field-proven config; see OnDestroyCommandListEvent and cmd_slots.hpp)",
+                           "20:30:28:696 [38852] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: NR skipped (after-upscale): compute-state restore target incomplete (hooks=1 heaps=1 root_signature=0 root_arguments=0 pso=0); injecting would leave our bindings bound for the game. Retried every evaluate - the list\u0027s next observed Reset completes it",
+                           "20:30:28:880 [16736] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: present events resumed; NGX-driven lifecycle ticks retired"
+                       ]
+    },
+    {
+        "ElapsedSec":  30,
+        "ProcessRunning":  true,
+        "GpuSmi":  "2026/10/17 20:30:36.758, 3512, 1, 17.30, 1980",
+        "LastNrLogs":  [
+                           "20:30:28:689 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: NGX feature create returned: feature=1 (DLSS/DLAA), result=1 (success), handle=0x1c0e678530",
+                           "20:30:28:690 [38852] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: present events starved while NGX evaluates continue; driving the per-frame lifecycle (hotkeys, captures, retirement) from NGX evaluate ticks",
+                           "20:30:28:690 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: first NGX evaluate intercepted (slot=0)",
+                           "20:30:28:691 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: compute-state shadow installed on the D3D12 command list vtable (Reset, ClearState, SetPipelineState, SetDescriptorHeaps, SetComputeRootSignature, root descriptor tables, root constants plural, root CBV/SRV/UAV; no Release detour and no list-destruction event - v6audit2 field-proven config; see OnDestroyCommandListEvent and cmd_slots.hpp)",
+                           "20:30:28:696 [38852] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: NR skipped (after-upscale): compute-state restore target incomplete (hooks=1 heaps=1 root_signature=0 root_arguments=0 pso=0); injecting would leave our bindings bound for the game. Retried every evaluate - the list\u0027s next observed Reset completes it",
+                           "20:30:28:880 [16736] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: present events resumed; NGX-driven lifecycle ticks retired"
+                       ]
+    },
+    {
+        "ElapsedSec":  35,
+        "ProcessRunning":  true,
+        "GpuSmi":  "2026/10/17 20:30:41.847, 3499, 16, 3.13, 210",
+        "LastNrLogs":  [
+                           "20:30:28:689 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: NGX feature create returned: feature=1 (DLSS/DLAA), result=1 (success), handle=0x1c0e678530",
+                           "20:30:28:690 [38852] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: present events starved while NGX evaluates continue; driving the per-frame lifecycle (hotkeys, captures, retirement) from NGX evaluate ticks",
+                           "20:30:28:690 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: first NGX evaluate intercepted (slot=0)",
+                           "20:30:28:691 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: compute-state shadow installed on the D3D12 command list vtable (Reset, ClearState, SetPipelineState, SetDescriptorHeaps, SetComputeRootSignature, root descriptor tables, root constants plural, root CBV/SRV/UAV; no Release detour and no list-destruction event - v6audit2 field-proven config; see OnDestroyCommandListEvent and cmd_slots.hpp)",
+                           "20:30:28:696 [38852] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: NR skipped (after-upscale): compute-state restore target incomplete (hooks=1 heaps=1 root_signature=0 root_arguments=0 pso=0); injecting would leave our bindings bound for the game. Retried every evaluate - the list\u0027s next observed Reset completes it",
+                           "20:30:28:880 [16736] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: present events resumed; NGX-driven lifecycle ticks retired"
+                       ]
+    },
+    {
+        "ElapsedSec":  40,
+        "ProcessRunning":  true,
+        "GpuSmi":  "2026/10/17 20:30:46.914, 1241, 13, 3.31, 210",
+        "LastNrLogs":  [
+                           "20:30:28:689 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: NGX feature create returned: feature=1 (DLSS/DLAA), result=1 (success), handle=0x1c0e678530",
+                           "20:30:28:690 [38852] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: present events starved while NGX evaluates continue; driving the per-frame lifecycle (hotkeys, captures, retirement) from NGX evaluate ticks",
+                           "20:30:28:690 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: first NGX evaluate intercepted (slot=0)",
+                           "20:30:28:691 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: compute-state shadow installed on the D3D12 command list vtable (Reset, ClearState, SetPipelineState, SetDescriptorHeaps, SetComputeRootSignature, root descriptor tables, root constants plural, root CBV/SRV/UAV; no Release detour and no list-destruction event - v6audit2 field-proven config; see OnDestroyCommandListEvent and cmd_slots.hpp)",
+                           "20:30:28:696 [38852] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: NR skipped (after-upscale): compute-state restore target incomplete (hooks=1 heaps=1 root_signature=0 root_arguments=0 pso=0); injecting would leave our bindings bound for the game. Retried every evaluate - the list\u0027s next observed Reset completes it",
+                           "20:30:28:880 [16736] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: present events resumed; NGX-driven lifecycle ticks retired"
+                       ]
+    },
+    {
+        "ElapsedSec":  45,
+        "ProcessRunning":  false,
+        "GpuSmi":  "2026/10/17 20:30:52.003, 1241, 16, 3.09, 210",
+        "LastNrLogs":  [
+                           "20:30:28:689 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: NGX feature create returned: feature=1 (DLSS/DLAA), result=1 (success), handle=0x1c0e678530",
+                           "20:30:28:690 [38852] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: present events starved while NGX evaluates continue; driving the per-frame lifecycle (hotkeys, captures, retirement) from NGX evaluate ticks",
+                           "20:30:28:690 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: first NGX evaluate intercepted (slot=0)",
+                           "20:30:28:691 [38852] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: compute-state shadow installed on the D3D12 command list vtable (Reset, ClearState, SetPipelineState, SetDescriptorHeaps, SetComputeRootSignature, root descriptor tables, root constants plural, root CBV/SRV/UAV; no Release detour and no list-destruction event - v6audit2 field-proven config; see OnDestroyCommandListEvent and cmd_slots.hpp)",
+                           "20:30:28:696 [38852] | WARN  | [DLSS 5 Neural Rendering] DLSS5 Generic: NR skipped (after-upscale): compute-state restore target incomplete (hooks=1 heaps=1 root_signature=0 root_arguments=0 pso=0); injecting would leave our bindings bound for the game. Retried every evaluate - the list\u0027s next observed Reset completes it",
+                           "20:30:28:880 [16736] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: present events resumed; NGX-driven lifecycle ticks retired"
+                       ]
+    }
+]
