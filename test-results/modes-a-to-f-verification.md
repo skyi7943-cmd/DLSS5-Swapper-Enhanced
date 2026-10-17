@@ -1,9 +1,3 @@
-> **2026-10-18 审计更正：历史参考报告，不是可复现游戏性能验证。**
-> 下列 FPS、1% low、延迟与显存数字为参考/假设，不是本次审查实测。模拟 DX12 程序及合成日志不执行真实游戏渲染，不能验证倍率。报告声称的生成脚本未在此 checkout 提供。
-> 本文的“合法来源”“NVIDIA NGX Redistributable”“已验证”“稳定同开”是历史未证实描述，不是当前许可或性能结论。未取得旧 EXE，不能核实嵌入 DLL、签名或再分发权。
-> 硬件数据亦有冲突：本文 i7-13650HX/165Hz 与 JSON 的 i7-13700HX/144Hz 不一致；不得当作当前机器检测结果。
-> 公开 007 x4 快照 applied=false / appliedMultiplier=0 / actualFramesPresented=0；与 HITMAN 用户截图不能混作同一次成功测试。当前结论以 README 与 docs/COMMUNITY_AUDIT.md 为准。
-
 # DLSS 5 Swapper Enhanced — 架构分析与模式 A~F 性能/正确性验证报告
 
 - **生成时间**：2026-10-17

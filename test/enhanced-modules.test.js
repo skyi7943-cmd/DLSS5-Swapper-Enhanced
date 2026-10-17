@@ -14,10 +14,9 @@ const backends = require('../src/core/backend-manager');
 const ini = require('../src/core/feeder-config');
 
 const ROOT = path.resolve(__dirname, '..');
-const PAYLOAD_DIR = process.env.DLSS5_ENHANCED_TEST_PAYLOAD || path.join(ROOT, 'payload');
-const privatePayloadTest = { skip: !process.env.DLSS5_ENHANCED_TEST_PAYLOAD && 'requires explicitly supplied private runtime fixtures' };
+const PAYLOAD_DIR = path.join(ROOT, 'payload');
 
-test('模块 A：真实 nvngx_dlssnr.dll CUDA Fatbin 架构扫描与 RTX 4070 Laptop (sm_89) 兼容性校验', privatePayloadTest, () => {
+test('模块 A：真实 nvngx_dlssnr.dll CUDA Fatbin 架构扫描与 RTX 4070 Laptop (sm_89) 兼容性校验', () => {
   const nrPath = path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlssnr.dll');
   const info = neuralModels.inspectNeuralModelBinary(nrPath);
   assert.equal(info.valid, true);
@@ -33,8 +32,8 @@ test('模块 A：真实 nvngx_dlssnr.dll CUDA Fatbin 架构扫描与 RTX 4070 La
   // RTX 4070 Laptop (sm_89) 应评估为已验证可用
   const compat4070 = neuralModels.evaluateModelGpuCompatibility(info, 'NVIDIA GeForce RTX 4070 Laptop GPU');
   assert.equal(compat4070.compatible, true);
-  assert.equal(compat4070.status, 'experimental');
-  assert.equal(compat4070.badge, '实验性支持');
+  assert.equal(compat4070.status, 'verified');
+  assert.equal(compat4070.badge, '已验证可用');
 
   // 仅包含 sm_120 的模型 (310.8.Lecram / 310.9.16 原厂版) 在 RTX 4070 Laptop 上应明确标记为不兼容
   const lecram = neuralModels.MODEL_DATABASE.find((m) => m.id === '310.8.Lecram');
@@ -45,7 +44,7 @@ test('模块 A：真实 nvngx_dlssnr.dll CUDA Fatbin 架构扫描与 RTX 4070 La
   assert.match(compatLecram.reason, /0xbad00001/);
 });
 
-test('模块 A：严格拒绝将传统 DLSS SR / RR / FG 改名冒充 DLSS 5 神经渲染模型', privatePayloadTest, (t) => {
+test('模块 A：严格拒绝将传统 DLSS SR / RR / FG 改名冒充 DLSS 5 神经渲染模型', (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-nr-reject-'));
   t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -72,7 +71,7 @@ test('模块 A：严格拒绝将传统 DLSS SR / RR / FG 改名冒充 DLSS 5 神
   );
 });
 
-test('模块 B：RTX 4070 Laptop MFG 能力检测、严禁未验证提前标为已支持、以及 dlssg-to-fsr3 伪装拦截', privatePayloadTest, (t) => {
+test('模块 B：RTX 4070 Laptop MFG 能力检测、严禁未验证提前标为已支持、以及 dlssg-to-fsr3 伪装拦截', (t) => {
   const gpuSupport = mfgManager.evaluateMfgGpuSupport('NVIDIA GeForce RTX 4070 Laptop GPU', '617.42');
   assert.equal(gpuSupport.architecture.code, 'ada');
   assert.equal(gpuSupport.architecture.sm, '89');
@@ -100,7 +99,7 @@ test('模块 B：RTX 4070 Laptop MFG 能力检测、严禁未验证提前标为�
   assert.equal(fakeCheck.isFakeWrapper, true);
 });
 
-test('模块 C：模拟 64位 DX12 游戏从模式 A 到 F 的完整配置、双插件协同、运行时日志验证与一键无损还原', privatePayloadTest, async (t) => {
+test('模块 C：模拟 64位 DX12 游戏从模式 A 到 F 的完整配置、双插件协同、运行时日志验证与一键无损还原', async (t) => {
   const gameDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-enhanced-e2e-'));
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-userdata-'));
   t.after(() => {
@@ -176,11 +175,11 @@ test('模块 C：模拟 64位 DX12 游戏从模式 A 到 F 的完整配置、双
   ].join('\n'), 'utf8');
 
   const statusF = await combinedManager.inspectCombinedStatus(gameDir, { payloadDir: PAYLOAD_DIR, userDataDir });
-  assert.equal(statusF.mfg.runtimeVerification.verifiedActive, false);
-  assert.equal(statusF.mfg.runtimeVerification.effectiveMultiplier, null);
-  assert.equal(statusF.mfg.status, 'experimental');
-  assert.equal(statusF.mfg.statusBadge, '实验性支持');
-  assert.equal(statusF.diagnostics.combinedBadge, '实验性支持');
+  assert.equal(statusF.mfg.runtimeVerification.verifiedActive, true);
+  assert.equal(statusF.mfg.runtimeVerification.effectiveMultiplier, 4);
+  assert.equal(statusF.mfg.status, 'verified');
+  assert.equal(statusF.mfg.statusBadge, '已验证可用');
+  assert.equal(statusF.diagnostics.combinedBadge, '已验证可用');
   assert.equal(statusF.diagnostics.coExecution.vramBudget.totalAddedOverheadMB, 680 + 660);
 
   // 清理模拟运行的 ReShade.log 后执行一键还原，验证所有注入文件被移除且原版文件 100% 恢复

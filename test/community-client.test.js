@@ -175,14 +175,14 @@ test('chat reads stay public while user writes keep the install identity', async
 
 test('chat image bytes go through the single-use metered media gate', async t => {
   const { client, calls } = fixture(t, [
-    { body: { token: 'token', uploadUrl: 'https://example.test/upload/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', headers: { 'content-type': 'image/webp' } } },
+    { body: { token: 'token', uploadUrl: 'https://media.rakanki.com/upload/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', headers: { 'content-type': 'image/webp' } } },
     { status: 200, body: null }
   ]);
   const bytes = new Uint8Array(1200).buffer;
   assert.equal(await client.chatUpload({ mime: 'image/webp', width: 100, height: 100, bytes: 1200 }, bytes), 'token');
   assert.equal(calls[0].url, 'https://example.test/v1/chat/uploads');
   assert.ok(calls[0].options.headers['x-install']);
-  assert.match(String(calls[1].url), /^https:\/\/example\.test\/upload\//);
+  assert.match(String(calls[1].url), /^https:\/\/media\.rakanki\.com\/upload\//);
   assert.equal(calls[1].options.method, 'PUT');
   assert.equal(calls[1].options.body.length, 1200);
 });

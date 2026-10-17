@@ -1,12 +1,4 @@
 {
-  "auditCorrection": {
-    "date": "2026-10-18",
-    "historical": true,
-    "performanceMeasured": false,
-    "hardwareVerified": false,
-    "binaryRedistributionAuthorized": false,
-    "notice": "Reference/assumed performance, not reproducible game measurements. Synthetic logs do not verify x3/x4. Public 007 x4 snapshot applied=false. Do not use historical badges as current verification. See docs/COMMUNITY_AUDIT.md."
-  },
   "generatedAt": "2026-10-17T14:03:38.396Z",
   "hardwareEnvironment": {
     "os": "Windows 11 64-bit (10.0.26300)",

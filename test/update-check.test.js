@@ -39,16 +39,24 @@ function load(t, { version = '2.2.1', fetchImpl } = {}) {
 
 const release = (tag) => ({ ok: true, json: async () => ({ tag_name: tag }) });
 
-test('development and packaged builds never query the former author update service', async t => {
-  const { handlers, calls } = load(t, { fetchImpl: async () => { throw Error('network must not run'); } });
+test('a newer release is reported, an older or equal one is not', async (t) => {
+  for (const [tag, newer] of [['v2.2.2', true], ['v2.3.0', true], ['v3.0.0', true],
+    ['v2.2.1', false], ['v2.2.0', false], ['v2.10.0', true]]) {
+    const { handlers } = load(t, { fetchImpl: async () => release(tag) });
+    const answer = await handlers.get('update-check')();
+    assert.equal(answer.newer, newer, `${tag} against 2.2.1`);
+    assert.equal(answer.current, '2.2.1');
+    assert.equal(answer.latest, tag.replace(/^v/, ''));
+  }
+});
+
+test('the lookup happens once per launch', async (t) => {
+  const { handlers, calls } = load(t, { fetchImpl: async () => release('v9.0.0') });
   const first = await handlers.get('update-check')();
   const second = await handlers.get('update-check')();
-  assert.equal(first.disabled, true);
-  assert.equal(first.newer, false);
-  assert.equal(first.current, '2.2.1');
-  assert.match(first.url, /skyi7943-cmd\/DLSS5-Swapper-Enhanced/);
-  assert.deepEqual(first, second);
-  assert.equal(calls.count, 0);
+  assert.equal(first.newer, true);
+  assert.deepEqual(second, first);
+  assert.equal(calls.count, 1, 'the answer is kept for the session');
 });
 
 test('being offline, rate-limited or blocked says nothing at all', async (t) => {

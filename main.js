@@ -1,5 +1,5 @@
 'use strict';
-// Skyi DLSS Enhanced
+// DLSS 5 Swapper
 // Finds the games already on the machine and installs DLSS 5 Neural
 // Rendering into them, using the scanners in src/core.
 const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Menu, Tray, Notification, nativeImage, safeStorage } = require('electron');
@@ -53,7 +53,7 @@ const community = () => communityClient || (communityClient = new CommunityClien
   file: path.join(app.getPath('userData'), 'community.json'),
   // Only ever set by hand, to point a development build at a server running
   // locally. Unset - which is every installed copy - it is the real one.
-  baseUrl: process.env.DLSS5_ENHANCED_COMMUNITY_API || '',
+  baseUrl: process.env.DLSS5_COMMUNITY_API || undefined,
   getAdminToken: () => adminAccess().load()
 }));
 const communityAnswer = async work => {
@@ -208,7 +208,7 @@ function addonLibrary() {
 function payload(raw) {
   // Installed, the payload rides along as an extra resource; from source it
   // sits beside main.js.
-  for (const dir of localPayloadCandidates()) {
+  for (const dir of [path.join(process.resourcesPath || '', 'payload'), path.join(__dirname, 'payload')]) {
     const probe = scanSource(dir);
     if (probe.ok) {
       const setup = fs.readdirSync(dir).find((f) => /^ReShade_Setup_.*_Addon\.exe$/i.test(f));
@@ -308,7 +308,7 @@ function posterUrl(game, state) {
 let tray = null;
 // The main process has no translations of its own, so the renderer hands these
 // over the way it already does for the game context menu.
-let trayLabels = { show: 'Open Skyi DLSS Enhanced', quit: 'Quit' };
+let trayLabels = { show: 'Open DLSS 5 Swapper', quit: 'Quit' };
 
 function showWindow() {
   if (!win || win.isDestroyed()) return;
@@ -329,12 +329,12 @@ function buildTrayMenu() {
 
 function ensureTray() {
   if (tray && !tray.isDestroyed()) return tray;
-  const source = nativeImage.createFromPath(path.join(__dirname, 'src', 'renderer', 'community-icon.png'));
+  const source = nativeImage.createFromPath(path.join(__dirname, 'src', 'renderer', 'icon.png'));
   // A 16px tray icon on Windows; an empty image would throw, so a full-size
   // fallback is better than no tray at all.
   const icon = source.isEmpty() ? source : source.resize({ width: 16, height: 16, quality: 'good' });
   try { tray = new Tray(icon); } catch { return null; }
-  tray.setToolTip('Skyi DLSS Enhanced');
+  tray.setToolTip('DLSS 5 Swapper');
   tray.on('click', showWindow);
   tray.on('double-click', showWindow);
   buildTrayMenu();
@@ -350,8 +350,6 @@ const runningPortable = () =>
 
 const payloadMissing = () => missingPayload({
   packaged: app.isPackaged,
-  userDataDir: app.getPath('userData'),
-  payloadDir: process.env.DLSS5_ENHANCED_PAYLOAD_DIR,
   resourcesPath: process.resourcesPath || __dirname,
   appRoot: __dirname,
   portable: runningPortable(),
@@ -365,7 +363,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 700,
     backgroundColor: '#05070a',
-    icon: path.join(__dirname, 'src', 'renderer', 'community-icon.png'),
+    icon: path.join(__dirname, 'src', 'renderer', 'icon.png'),
     // The window draws its own title bar, so the frame comes off.
     frame: false,
     autoHideMenuBar: true,
@@ -398,7 +396,7 @@ function createWindow() {
 // it the window is filed under whatever launched it - "Electron" when run from
 // source - instead of under the app.
 
-app.setAppUserModelId('io.github.skyi7943cmd.dlssenhanced');
+app.setAppUserModelId('com.rakan.dlss5swapper');
 
 // A second copy of the app is not just wasted memory: it writes its own
 // overlay endpoint over the first one's and listens on its own pipe, so the
@@ -498,8 +496,8 @@ ipcMain.handle('boot', () => {
     rail: state.rail === 'on' ? 'on' : 'off',
     lang: state.lang || 'en',
     groupGamesByStore: state.groupGamesByStore !== false,
-    logo: asUrl('community-mark.svg'),
-    logoDark: asUrl('community-mark.svg')
+    logo: asUrl('logo.png'),
+    logoDark: asUrl('logo-dark.png')
   };
 });
 
@@ -795,7 +793,7 @@ ipcMain.handle('community-chat-moderate', (_event, id, action) => communityAnswe
 ipcMain.handle('community-chat-save-image', async (event, source, suggestedName) => {
   try {
     const target = new URL(String(source || ''));
-    if (target.protocol !== 'https:' || (!process.env.DLSS5_ENHANCED_COMMUNITY_API || target.origin !== new URL(process.env.DLSS5_ENHANCED_COMMUNITY_API).origin) || !target.pathname.startsWith('/chat/')) {
+    if (target.protocol !== 'https:' || target.hostname !== 'media.rakanki.com' || !target.pathname.startsWith('/chat/')) {
       return { ok: false, message: 'This is not a community chat image.' };
     }
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -862,7 +860,7 @@ let noticeBusy = false;
 // #358: a fresh install polled the notice endpoint eight seconds after
 // launch, before anyone had opened Community at all. The first visit to the
 // page is the opt-in; until then this app talks to no server of ours.
-const communityUsed = () => Boolean(process.env.DLSS5_ENHANCED_COMMUNITY_API) && loadState().communityUsed === true;
+const communityUsed = () => loadState().communityUsed === true;
 function markCommunityUsed() {
   if (communityUsed()) return;
   const state = loadState();
@@ -1606,8 +1604,24 @@ function newerRelease(current, latest) {
 ipcMain.handle('update-check', async () => {
   if (updateAnswer) return updateAnswer;
   const current = app.getVersion();
-  // Independent fork: updates are manual and only link to this repository.
-  updateAnswer = { current, latest: current, newer: false, disabled: true, url: projectUrl('releases') };
+  // Enhanced: 在真实 Electron 运行环境中彻底断开原作 GitHub 在线升级检查，防止覆盖增强版功能
+  if (typeof app.isPackaged === 'boolean') {
+    updateAnswer = { current, latest: current, newer: false, disabled: true };
+    return updateAnswer;
+  }
+  try {
+    const response = await fetch('https://api.github.com/repos/rakanki911/DLSS5-Swapper/releases/latest', {
+      headers: { 'User-Agent': `DLSS5-Swapper/${current}`, Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!response.ok) throw Error(String(response.status));
+    const release = await response.json();
+    const latest = String(release.tag_name || '').replace(/^v/, '');
+    updateAnswer = { current, latest, newer: newerRelease(current, latest) };
+  } catch {
+    // Offline, rate-limited or blocked: say nothing rather than worry anyone.
+    updateAnswer = { current, latest: null, newer: false };
+  }
   return updateAnswer;
 });
 ipcMain.handle('details', async (_event, dir) => {
@@ -1988,12 +2002,21 @@ const neuralModels = require('./src/core/neural-models');
 const mfgManager = require('./src/core/mfg-manager');
 const combinedManager = require('./src/core/combined-manager');
 
-function localPayloadCandidates() {
-  return [process.env.DLSS5_ENHANCED_PAYLOAD_DIR, path.join(app.getPath('userData'), 'payload'),
-    !app.isPackaged ? path.join(__dirname, 'payload') : null].filter(Boolean);
-}
 function resolvePayloadRoot() {
-  return localPayloadCandidates().find(dir => fs.existsSync(dir)) || path.join(app.getPath('userData'), 'payload');
+  const candidates = [
+    path.join(process.resourcesPath || '', 'payload'),
+    path.join(__dirname, 'payload'),
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload') : null,
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload') : null,
+    'E:\\DLSS5-Swapper-Enhanced\\payload'
+  ].filter(Boolean);
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'enhanced', 'mfg', 'renodx-mfgunlock.addon64'))) return dir;
+  }
+  for (const dir of candidates) {
+    if (fs.existsSync(dir)) return dir;
+  }
+  return path.join(__dirname, 'payload');
 }
 
 ipcMain.handle('enhanced-hardware', async (_event, forceRefresh) => {

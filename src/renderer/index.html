@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob: http://127.0.0.1:*" />
-  <title>Skyi DLSS Enhanced</title>
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data: blob: https://5.rakanki.com https://media.rakanki.com http://127.0.0.1:*" />
+  <title>DLSS 5 Swapper</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="overlay-lab.css" />
   <link rel="stylesheet" href="overlay-controls.css" />
@@ -63,9 +63,9 @@
 
       <div class="status-card">
         <div class="status-line"><i class="live"></i><b id="statusText" data-i18n="ready">Ready</b></div>
-        <p class="status-sub">Skyi DLSS Enhanced</p>
+        <p class="status-sub">DLSS 5 Swapper</p>
         <p class="status-sub" id="statusVersion"></p>
-        <a class="status-update hidden" id="statusUpdate" style="display:none !important" href="https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/releases/latest" data-project="releases"></a>
+        <a class="status-update hidden" id="statusUpdate" style="display:none !important" href="https://github.com/rakanki911/DLSS5-Swapper/releases/latest" data-project="releases"></a>
         <div class="bar"><i id="statusBar" style="width:22%"></i></div>
       </div>
     </aside>
@@ -162,7 +162,7 @@
         <div class="section-head community-heading">
           <!-- The badge is a sibling of the title, not inside it: the title's
                text is replaced wholesale when the language changes. -->
-          <div><div class="community-title-row"><h3 id="communityTitle">Community-tested games</h3><span class="beta-tag" title="This feature is new and still being tested">BETA</span></div><p class="hint" id="communitySubtitle">Real results from Skyi DLSS Enhanced users.</p></div>
+          <div><div class="community-title-row"><h3 id="communityTitle">Community-tested games</h3><span class="beta-tag" title="This feature is new and still being tested">BETA</span></div><p class="hint" id="communitySubtitle">Real results from DLSS 5 Swapper users.</p></div>
           <div class="community-heading-actions">
             <button class="glass-btn sm" id="communityRefresh">Refresh</button>
             <span class="community-game-total" id="communityGameTotal" role="status" aria-live="polite">— games</span>
@@ -266,14 +266,23 @@
       <section class="view" id="view-about">
         <div class="section-head"><h3 data-i18n="navAbout">About</h3></div>
         <div class="glass pad about">
-          <p><b data-i18n="aboutTitle">Skyi DLSS Enhanced</b></p>
+          <p><b data-i18n="aboutTitle">DLSS 5 Swapper</b></p>
           <p data-i18n="aboutBody"></p>
           <div class="about-links">
-            <a class="glass-btn" href="https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced" data-project="github">GitHub ↗</a>
-            <a class="glass-btn" style="display:none !important" href="https://github.com/skyi7943-cmd/DLSS5-Swapper-Enhanced/releases/latest" data-project="releases"><span data-i18n="latestReleases">Latest releases</span> ↗</a>
+            <a class="glass-btn" href="https://github.com/rakanki911/DLSS5-Swapper" data-project="github">GitHub ↗</a>
+            <a class="glass-btn" style="display:none !important" href="https://github.com/rakanki911/DLSS5-Swapper/releases/latest" data-project="releases"><span data-i18n="latestReleases">Latest releases</span> ↗</a>
           </div>
           <p class="hint hidden" id="projectLinkError" role="status" data-i18n="errProjectLink"></p>
-          <p class="dim">Maintained by skyi7943-cmd and community contributors. Based on MIT code by Rakan Alkhaldi; see LICENSE and THIRD_PARTY_NOTICES.</p>
+          <div class="support">
+            <p class="support-line" data-i18n="supportBody"></p>
+            <div class="support-row">
+              <a href="https://buymeacoffee.com/rakanki911" data-project="coffee" class="support-button">
+                <img src="support-coffee.png" alt="Buy me a coffee" height="40">
+              </a>
+              <img class="support-qr" src="support-qr.png" alt="Buy me a coffee QR code" width="112" height="112">
+            </div>
+          </div>
+          <p class="dim" data-i18n="aboutBy">Built by Rakan Alkhaldi</p>
         </div>
       </section>
     </div>
