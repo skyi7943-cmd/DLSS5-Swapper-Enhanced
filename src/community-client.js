@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const DEFAULT_API = 'https://5.rakanki.com';
+const DEFAULT_API = 'http://127.0.0.1:0';
 const ADMIN_TOKEN_PATTERN = /^dlss5_admin_[A-Za-z0-9_-]{43}$/;
 
 function validState(value) {

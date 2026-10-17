@@ -197,7 +197,7 @@ The install will go through. If the neural pass never appears in game, 616.56 is
     setFolders: 'Scanned folders', setAdd: 'Add', setLibrary: 'Library file', setReset: 'Reset',
     setRoots: 'Found on your drives',
     setPosters: 'Posters', setSaved: (n) => `${n} saved`, setLang: 'Language',
-    aboutTitle: 'DLSS 5 Swapper', aboutBody: 'Puts DLSS 5 Neural Rendering into your games, and takes it back out whenever you want.', aboutBy: 'Built by Rakan Alkhaldi',
+    aboutTitle: 'DLSS 5 Swapper Enhanced', aboutBody: 'Independent MIT open-source enhanced edition: DLSS 5 Neural Rendering + RTX 40 MFG x3/x4 + 8GB VRAM Optimization + Full Chinese In-Game Menu.', aboutBy: 'Enhanced Fork by skyi7943-cmd · Based on MIT Open-Source Codebase (Rakan Alkhaldi)',
     supportBody: 'DLSS 5 Swapper is free and MIT licensed. If it saved you an evening of fiddling, you can buy me a coffee - or scan the code with your phone.',
     agoNow: 'just now', agoMin: (n) => `${n} min ago`, agoHour: (n) => `${n} h ago`, agoDay: (n) => `${n} d ago`,
     artFound: (a, b) => `Artwork: ${a} of ${b} found`, libReady: (n, d) => `Library ready — ${n} games, ${d} on DirectX 12`
@@ -409,7 +409,7 @@ The install will go through. If the neural pass never appears in game, 616.56 is
     setFolders: '已扫描的文件夹', setAdd: '添加', setLibrary: '库文件', setReset: '重置',
     setRoots: '在磁盘上找到',
     setPosters: '封面', setSaved: (n) => `已保存 ${n} 个`, setLang: '语言',
-    aboutTitle: 'DLSS 5 Swapper', aboutBody: '为你的游戏装上 DLSS 5，也能随时还原。', aboutBy: '由 Rakan Alkhaldi 开发',
+    aboutTitle: 'DLSS 5 Swapper Enhanced (增强版)', aboutBody: '基于 MIT 开源协议深度重构的独立增强分支：集成 DLSS 5 神经渲染、RTX 40 x3/x4 多帧生成、笔记本 8GB 显存优化与零崩溃游戏内全中文菜单。', aboutBy: '由 skyi7943-cmd 独立维护 · 基于 MIT 开源代码 (Original MIT by Rakan Alkhaldi) 衍生，与任何第三方收费网站无关',
     agoNow: '刚刚', agoMin: (n) => `${n} 分钟前`, agoHour: (n) => `${n} 小时前`, agoDay: (n) => `${n} 天前`,
     artFound: (a, b) => `封面：${b} 个中找到 ${a} 个`, libReady: (n, d) => `库已就绪 — ${n} 个游戏，${d} 个使用 DirectX 12`
   },

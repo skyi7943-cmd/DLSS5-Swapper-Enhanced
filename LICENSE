@@ -1,6 +1,7 @@
 MIT License
 
-Copyright (c) 2026 Rakan Alkhaldi
+Copyright (c) 2026 Rakan Alkhaldi (Original MIT-licensed codebase up to v2.2.9)
+Copyright (c) 2026 skyi7943-cmd (Enhanced Edition: RTX 40 MFG x3/x4 Integration, 8GB Laptop GPU Optimization & Zero-Crash Simplified Chinese In-Game Localization)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +20,28 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+================================================================================
+INDEPENDENT FORK & NON-AFFILIATION NOTICE (独立衍生分支与非官方关联声明)
+================================================================================
+
+1. Legal Derivative Work under Irrevocable MIT Grant:
+   This repository ("DLSS 5 Swapper Enhanced") is an independent open-source
+   fork and derivative work based on the MIT-licensed codebase publicly released
+   prior to v2.2.9. Under copyright law and the terms of the MIT License, the
+   permissions granted to use, copy, modify, merge, publish, and distribute
+   such MIT-licensed versions are perpetual and irrevocable, and all original
+   copyright notices are preserved in full above.
+
+2. Non-Affiliation & No Endorsement:
+   This project is independently developed and maintained by skyi7943-cmd. It
+   is NOT affiliated with, endorsed by, sponsored by, or connected to the
+   original author (Rakan Alkhaldi), any commercial/paywall websites (such as
+   dlss5swapper.org), NVIDIA Corporation, or any game publisher. All upstream
+   private API endpoints (e.g., 5.rakanki.com) and update checks have been
+   permanently disconnected so this software operates 100% locally and offline.
+
+3. Always Free & Open-Source:
+   This Enhanced Edition is provided 100% free of charge under the MIT License.
+   If you paid money on any third-party paywall website to download this tool,
+   you were overcharged by an unaffiliated third party.

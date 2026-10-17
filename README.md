@@ -2,8 +2,13 @@
 
 <p align="center">
   <b>最新 2026 年 10 月 DLSS 5 神经渲染 · RTX 40 系列 x3/x4 多帧生成解锁 · 双模块协同运行 · 游戏内 Home 菜单全量零崩溃简体中文汉化</b><br/>
-  <sub>专为 NVIDIA GeForce RTX 4070 Laptop (8GB VRAM) 等主流移动端与桌面端 RTX 显卡深度调优</sub>
+  <sub>专为 NVIDIA GeForce RTX 4070 Laptop (8GB VRAM) 等主流移动端与桌面端 RTX 显卡深度调优 · 100% 永久免费开源</sub>
 </p>
+
+> [!IMPORTANT]
+> ### 🛡️ 独立开源分支与法律合规声明 (Independent MIT Fork & Non-Affiliation Notice)
+> - **中文声明**：本项目（`DLSS 5 Swapper Enhanced`）是基于原开源版本（`v2.2.9`）在 **MIT 许可证（MIT License）** 不可撤销授权下合法衍生的**独立开源社区分支**，由 `skyi7943-cmd` 独立重构与维护。本项目**与原作者（Rakan Alkhaldi）、任何第三方付费下载网站（如 `dlss5swapper.org` 等收费站点）以及 NVIDIA Corporation 均无任何商业隶属、背书或合作关系**。本项目已彻底移除所有指向原作者私有服务器（`5.rakanki.com`）的网络请求与自动升级逻辑，100% 纯本地离线安全运行，且**永久免费开源**。
+> - **English Legal Notice**: **DLSS 5 Swapper Enhanced** is an independent, non-commercial community fork and derivative work based on the MIT-licensed codebase publicly released prior to v2.2.9. Under copyright law and the explicit terms of the [MIT License](LICENSE), the grant to use, copy, modify, merge, publish, and distribute the MIT-licensed software is perpetual and irrevocable. All original copyright notices (`Copyright (c) 2026 Rakan Alkhaldi`) are preserved in [`LICENSE`](LICENSE). **This project is NOT affiliated with, endorsed by, or connected to the original author, `dlss5swapper.org` (or any third-party paywall website), or NVIDIA Corporation.** All upstream private API servers (`5.rakanki.com`) have been permanently disconnected.
 
 ---
 
@@ -165,11 +170,18 @@ DLSS5-Swapper-Enhanced/
 
 ---
 
-## 八、开源许可与致谢 (License & Credits)
+## 八、开源许可、版权归属与免责声明 (License, Copyright & Legal Disclaimer)
 
-- 本项目源代码基于 **MIT License** 开源（继承自 [rakanki911/DLSS5-Swapper](https://github.com/rakanki911/DLSS5-Swapper)）。
-- 第三方组件致谢与许可证详见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)：
+- **MIT 开源授权 (Irrevocable MIT License)**：
+  - `Copyright (c) 2026 Rakan Alkhaldi`（Original MIT-licensed codebase up to v2.2.9）
+  - `Copyright (c) 2026 skyi7943-cmd`（Enhanced Edition: RTX 40 MFG x3/x4 Integration, 8GB Laptop GPU Optimization & Zero-Crash Simplified Chinese In-Game Localization）
+  - 完整许可证文本见 [`LICENSE`](LICENSE)。根据 MIT 许可证条款，任何人均享有不可撤销的使用、复制、修改、合并、发布与再分发权利。
+- **非官方关联与反收费声明 (Non-Affiliation & Anti-Paywall Statement)**：
+  - 本仓库系独立维护的开源衍生版本，与原作者个人及 `dlss5swapper.org` 等任何第三方收费网站无任何关联；
+  - 软件已完全切断 `5.rakanki.com` 等外部私有 API 通信，不收集任何用户数据，不消耗任何第三方私有服务器带宽。
+- **第三方组件致谢与许可证**（详见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)）：
   - **ReShade** (`BSD-3-Clause`)
   - **MFGAdaUnlock-RenoDx** (`MIT License`)
   - **OptiScaler** (`GPL-3.0`)
-  - **NVIDIA NGX / DLSS / Streamline Runtime DLLs**：归 NVIDIA Corporation 所有，遵循 NVIDIA 相关运行时许可协议。
+  - **NVIDIA NGX / DLSS / Streamline Runtime DLLs**：商标与二进制所有权归 NVIDIA Corporation 所有，遵循 NVIDIA 相关运行时许可协议。
+

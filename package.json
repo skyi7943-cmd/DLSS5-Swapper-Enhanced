@@ -1,7 +1,7 @@
 {
-  "name": "dlss5-swapper",
+  "name": "dlss5-swapper-enhanced",
   "version": "2.2.9",
-  "description": "DLSS 5 (Neural Rendering) for your games - a library that finds them, and one click to install",
+  "description": "DLSS 5 Neural Rendering & RTX 40 MFG x3/x4 Manager (Enhanced Edition with 8GB VRAM Optimization & Full Chinese In-Game Overlay)",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -18,7 +18,7 @@
     "overlay:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-overlay.ps1",
     "overlay:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-overlay.ps1"
   },
-  "author": "Rakan Alkhaldi",
+  "author": "skyi7943-cmd (Independent MIT Fork)",
   "license": "MIT",
   "dependencies": {
     "extract-zip": "^2.0.1"
@@ -28,8 +28,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.rakan.dlss5swapper",
-    "productName": "DLSS 5 Swapper",
+    "appId": "com.skyi7943.dlss5swapper.enhanced",
+    "productName": "DLSS 5 Swapper Enhanced",
     "files": [
       "main.js",
       "preload.js",
@@ -75,14 +75,14 @@
         "deb"
       ],
       "category": "Game",
-      "maintainer": "Rakan Alkhaldi",
+      "maintainer": "skyi7943-cmd",
       "icon": "app_iocn.png",
-      "artifactName": "DLSS5-Swapper-${version}-${arch}.${ext}"
+      "artifactName": "DLSS5-Swapper-Enhanced-${version}-${arch}.${ext}"
     },
     "compression": "maximum",
     "portable": {
-      "artifactName": "DLSS5-Swapper-${version}-portable.exe",
-      "unpackDirName": "DLSS5-Swapper"
+      "artifactName": "DLSS5-Swapper-Enhanced-${version}-portable.exe",
+      "unpackDirName": "DLSS5-Swapper-Enhanced"
     },
     "nsis": {
       "oneClick": false,
@@ -90,12 +90,12 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "DLSS 5 Swapper",
+      "shortcutName": "DLSS 5 Swapper Enhanced",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
       "deleteAppDataOnUninstall": true,
-      "artifactName": "DLSS5-Swapper-Setup-${version}.exe",
+      "artifactName": "DLSS5-Swapper-Enhanced-Setup-${version}.exe",
       "include": "build/installer.nsh"
     }
   }

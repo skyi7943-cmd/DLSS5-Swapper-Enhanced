@@ -57,6 +57,9 @@ const community = () => communityClient || (communityClient = new CommunityClien
   getAdminToken: () => adminAccess().load()
 }));
 const communityAnswer = async work => {
+  if (typeof app.isPackaged === 'boolean' && !process.env.DLSS5_COMMUNITY_API) {
+    return { ok: false, error: 'community_offline', message: '增强版已彻底断开原作者私服，运行于纯本地安全离线模式', status: null };
+  }
   if (!communityUsed()) return { ok: false, error: 'community_opt_in', message: 'Community has not been opened yet', status: null };
   try { return { ok: true, ...(await work()) }; }
   catch (error) { return { ok: false, error: error.code || 'community_failed', message: error.message, status: error.status || null }; }
@@ -396,7 +399,7 @@ function createWindow() {
 // it the window is filed under whatever launched it - "Electron" when run from
 // source - instead of under the app.
 
-app.setAppUserModelId('com.rakan.dlss5swapper');
+app.setAppUserModelId('com.skyi7943.dlss5swapper.enhanced');
 
 // A second copy of the app is not just wasted memory: it writes its own
 // overlay endpoint over the first one's and listens on its own pipe, so the
@@ -1610,7 +1613,7 @@ ipcMain.handle('update-check', async () => {
     return updateAnswer;
   }
   try {
-    const response = await fetch('https://api.github.com/repos/rakanki911/DLSS5-Swapper/releases/latest', {
+    const response = await fetch('https://api.github.com/repos/skyi7943-cmd/DLSS5-Swapper-Enhanced/releases/latest', {
       headers: { 'User-Agent': `DLSS5-Swapper/${current}`, Accept: 'application/vnd.github+json' },
       signal: AbortSignal.timeout(8000)
     });
