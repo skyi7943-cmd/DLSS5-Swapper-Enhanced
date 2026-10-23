@@ -87,14 +87,70 @@ async function detectHardwareEnvironment(forceRefresh = false) {
   return cachedHardwareInfo;
 }
 
-// 评估在 RTX 4070 Laptop (8GB VRAM, 1080p) 下同时或单独开启 DLSS 5 与 MFG 的显存预算
+// 解析当前生效的硬件优化档位（优先使用用户显式选择的档位，其次读取游戏备份清单，最后按显卡型号自动匹配）
+function resolveHardwareProfile(requestedProfile, gpuName = '', manifestProfile = null) {
+  const validIds = new Set(['rtx40_laptop', 'rtx40_desktop', 'rtx50_desktop']);
+  if (requestedProfile && validIds.has(requestedProfile)) return requestedProfile;
+  if (manifestProfile && validIds.has(manifestProfile)) return manifestProfile;
+  const g = String(gpuName || '');
+  if (/\bRTX\s*50\d{2}/i.test(g) || /Blackwell/i.test(g)) return 'rtx50_desktop';
+  if (/\bRTX\s*40\d{2}/i.test(g) && !/Laptop|Mobile/i.test(g)) return 'rtx40_desktop';
+  return 'rtx40_laptop';
+}
+
+// 评估在各硬件档位（笔记本 40 系列 8GB / 40 系桌面卡 / 50 系桌面卡）下同时或单独开启 DLSS 5 与 MFG 的显存预算
 function estimateVramBudget({
   neuralMode = 'off',
   neuralModelId = '310.8.SF-v2',
   mfgMode = 'off',
   vramTotalMB = 8188,
-  resolution = '1920x1080'
+  resolution = '1920x1080',
+  hardwareProfile = 'rtx40_laptop'
 } = {}) {
+  // 桌面卡档位（40系桌面卡 / 50系桌面卡）：按 2K/4K 100% 满血工作分辨率与 8 缓冲池评估
+  if (hardwareProfile === 'rtx40_desktop' || hardwareProfile === 'rtx50_desktop') {
+    const effectiveVramMB = vramTotalMB > 10000 ? vramTotalMB : (hardwareProfile === 'rtx50_desktop' ? 16384 : 12288);
+    const desktopRes = resolution === '1920x1080' ? '2560x1440 (100% 满血工作分辨率)' : resolution;
+    const baseGame1080pMB = 6800;
+    let neuralOverheadMB = 0;
+    if (neuralMode !== 'off') {
+      neuralOverheadMB = neuralModelId === '310.9.16-oct2026' ? 760 : 920;
+    }
+    let mfgOverheadMB = 0;
+    if (mfgMode === 'x2') mfgOverheadMB = 420;
+    else if (mfgMode === 'x3') mfgOverheadMB = 620;
+    else if (mfgMode === 'x4') mfgOverheadMB = 820;
+
+    const totalAddedOverheadMB = neuralOverheadMB + mfgOverheadMB;
+    const estimatedTotalMB = baseGame1080pMB + totalAddedOverheadMB;
+    const headroomMB = effectiveVramMB - estimatedTotalMB;
+    const usagePercent = Math.min(100, Math.round((estimatedTotalMB / effectiveVramMB) * 100));
+    const profileLabel = hardwareProfile === 'rtx50_desktop' ? 'RTX 50 系列桌面卡 (Blackwell 原生直通)' : 'RTX 40 系桌面卡 (100% 满血画质档)';
+
+    let level = 'safe';
+    let summary = `[${profileLabel}] 100% 满血分辨率 + 8 表面缓冲池下预计附加显存开销 +${totalAddedOverheadMB} MiB，总显存占用约 ${estimatedTotalMB}/${effectiveVramMB} MiB (${usagePercent}%)，桌面大显存裕量充沛。`;
+    if (headroomMB < 800) {
+      level = 'caution';
+      summary = `[${profileLabel}] DLSS 5 100% 满血画质 (+${neuralOverheadMB} MiB) + MFG ${mfgMode} (+${mfgOverheadMB} MiB) 合计增加 +${totalAddedOverheadMB} MiB 显存开销，剩余显存裕量约 ${headroomMB} MiB，4K 极限画质下建议配合 DLSS Quality 模式。`;
+    }
+
+    return {
+      resolution: desktopRes,
+      vramTotalMB: effectiveVramMB,
+      baseGame1080pMB,
+      neuralOverheadMB,
+      mfgOverheadMB,
+      totalAddedOverheadMB,
+      estimatedTotalMB,
+      headroomMB,
+      usagePercent,
+      level,
+      hardwareProfile,
+      summary
+    };
+  }
+
+  // 笔记本 40 系列默认黄金档位（保持 100% 原封不动）
   const baseGame1080pMB = 5400; // 1080p 现代 DX12 游戏典型显存基准
   let neuralOverheadMB = 0;
   if (neuralMode !== 'off') {
@@ -118,7 +174,7 @@ function estimateVramBudget({
     summary = `警告：DLSS 5 神经渲染 (+${neuralOverheadMB} MiB) 与 MFG ${mfgMode} (+${mfgOverheadMB} MiB) 同时开启将增加约 ${totalAddedOverheadMB} MiB 显存开销，在 8GB 显卡上剩余裕量仅约 ${headroomMB} MiB，高负载场景可能触发显存溢出降速！建议在游戏内开启 DLSS Quality 并将贴图质量设为 High。`;
   } else if (headroomMB < 1000 && totalAddedOverheadMB > 800) {
     level = 'caution';
-    summary = `提示：DLSS 5 (+${neuralOverheadMB} MiB) + MFG ${mfgMode} (+${mfgOverheadMB} MiB) 合计增加 +${totalAddedOverheadMB} MiB 显存占用（预计总计 ~${estimatedTotalMB}/${vramTotalMB} MiB）。在 RTX 4070 Laptop 8GB (1080p) 下可稳定运行，但建议配合 DLSS Super Resolution Quality 模式以预留显存缓冲。`;
+    summary = `提示：DLSS 5 (+${neuralOverheadMB} MiB) + MFG ${mfgMode} (+${mfgOverheadMB} MiB) 合计增加 +${totalAddedOverheadMB} MiB 显存占用（预计总计 ~${estimatedTotalMB}/${vramTotalMB} MiB）。在 RTX 40 系列笔记本 8GB 省显存优化管线 (0.75x 神经工作集 + 边缘感知上采样) 下可稳定运行，建议配合 DLSS 超分辨率质量档以获得更佳显存裕量。`;
   }
 
   return {
@@ -132,12 +188,13 @@ function estimateVramBudget({
     headroomMB,
     usagePercent,
     level,
+    hardwareProfile: 'rtx40_laptop',
     summary
   };
 }
 
 // 执行 7 项 DLSS 5 + MFG 联合运行深度兼容性检查
-function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware) {
+function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, hardwareProfile = 'rtx40_laptop') {
   const exeDir = scan.chosen ? path.dirname(scan.chosen.path) : gameDir;
   const bothActive = neuralStatus.mode !== 'off' && mfgStatus.currentConfig.mode !== 'off';
 
@@ -192,25 +249,31 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
       : '默认采用 Native HUD/UI 标记直通，兼顾 HUD 清晰度与补帧稳定性。'
   };
 
-  // 5. 是否超过 RTX 4070 Laptop 的 8GB 显存限制
+  // 5. 是否超过目标显卡档位的显存预算限制
   const vramBudget = estimateVramBudget({
     neuralMode: neuralStatus.mode,
     neuralModelId: neuralStatus.currentModel?.id || '310.8.SF-v2',
     mfgMode: mfgStatus.currentConfig.mode,
-    vramTotalMB: hardware?.gpu?.vramTotalMB || 8188
+    vramTotalMB: hardware?.gpu?.vramTotalMB || 8188,
+    hardwareProfile
   });
 
   // 6. Reflex、帧同步和延迟控制是否仍有效
   const hasReflexDll = Boolean(mfgStatus.streamline.reflexPluginVersion) ||
     fs.existsSync(path.join(exeDir, 'sl.reflex.dll'));
+  const archCode = hardware?.gpu?.architecture?.code;
   const reflexCheck = {
-    ok: mfgStatus.currentConfig.mode === 'off' || hasReflexDll || Boolean(hardware?.gpu?.architecture?.code === 'ada'),
+    ok: mfgStatus.currentConfig.mode === 'off' || hasReflexDll || Boolean(archCode === 'ada' || archCode === 'blackwell' || hardwareProfile === 'rtx40_desktop' || hardwareProfile === 'rtx50_desktop'),
     hasReflexDll,
     reflexVersion: mfgStatus.streamline.reflexPluginVersion,
     hardwareFlipMetering: Boolean(mfgStatus.gpuSupport.hardwareFlipMetering),
-    message: hasReflexDll
-      ? `已检测到 sl.reflex.dll (${mfgStatus.streamline.reflexPluginVersion || '内置'}) 与 Ada 硬件 Flip Metering，帧同步与 Reflex 低延迟控制有效。`
-      : '未在游戏目录发现独立 sl.reflex.dll，可随 Streamline 运行时组件一并部署以确保 Reflex 延迟控制生效。'
+    message: hardwareProfile === 'rtx50_desktop'
+      ? `RTX 50 系列桌面卡 (Blackwell sm_120)：已启用第 5 代 Tensor Core 原生硬件 Flip Metering 与 sl.reflex.dll (${mfgStatus.streamline.reflexPluginVersion || '内置'}) 帧率同步。`
+      : hardwareProfile === 'rtx40_desktop'
+        ? `RTX 40 系桌面卡：已启用 sl.reflex.dll (${mfgStatus.streamline.reflexPluginVersion || '内置'}) + Reflex 强制低延迟护栏 (LatencyGuardMode=1) 与 Ada 硬件 Flip Metering。`
+        : hasReflexDll
+          ? `已检测到 sl.reflex.dll (${mfgStatus.streamline.reflexPluginVersion || '内置'}) 与 Ada 硬件 Flip Metering，帧同步与 Reflex 低延迟控制有效。`
+          : '未在游戏目录发现独立 sl.reflex.dll，可随 Streamline 运行时组件一并部署以确保 Reflex 延迟控制生效。'
   };
 
   // 7. 游戏关闭后能否完整恢复原状
@@ -258,18 +321,20 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
 }
 
 // 获取游戏的三大核心模块完整状态与诊断报告（供 UI 面板一次性渲染）
-async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir } = {}) {
+async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwareProfile } = {}) {
   const hardware = await detectHardwareEnvironment();
   const gpuName = hardware.gpu.name;
   const driverVersion = hardware.gpu.driver;
+  const manifest = backends.readManifest(gameDir);
+  const effectiveProfile = resolveHardwareProfile(hardwareProfile, gpuName, manifest?.hardwareProfile);
 
   const [scan, neuralStatus, mfgStatus] = await Promise.all([
     scanGame(gameDir),
-    neuralModels.inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuName }),
-    mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, driverVersion })
+    neuralModels.inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuName, hardwareProfile: effectiveProfile }),
+    mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, driverVersion, hardwareProfile: effectiveProfile })
   ]);
 
-  const coExecution = evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware);
+  const coExecution = evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, effectiveProfile);
 
   // 汇总错误日志
   const errorLogs = [
@@ -284,7 +349,7 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir } = {}) 
   if (coExecution.dllConflicts.some((c) => c.severity === 'error') || neuralStatus.overallStatus === 'incompatible') {
     combinedStatus = 'incompatible';
     combinedBadge = '不兼容';
-  } else if (neuralStatus.overallStatus === 'verified' && (mfgStatus. currentConfig.mode === 'off' || mfgStatus.status === 'verified')) {
+  } else if (neuralStatus.overallStatus === 'verified' && (mfgStatus.currentConfig.mode === 'off' || mfgStatus.status === 'verified')) {
     combinedStatus = 'verified';
     combinedBadge = '已验证可用';
   } else if (neuralStatus.installed || mfgStatus.currentConfig.installed) {
@@ -300,12 +365,25 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir } = {}) 
     graphicsApi: scan.chosen ? scan.chosen.apiLabel : 'Unknown',
     bitness: scan.chosen ? scan.chosen.bitness : null,
     installedRoute: scan.install ? scan.install.route : null,
-    hardware,
+    hardwareProfile: effectiveProfile,
+    hardwareProfileInfo: neuralModels.getHardwareProfileInfo(effectiveProfile),
+    hardwareProfiles: neuralModels.HARDWARE_PROFILES,
+    hardware: {
+      ...hardware,
+      activeProfile: effectiveProfile,
+      activeProfileInfo: neuralModels.getHardwareProfileInfo(effectiveProfile),
+      gpu: {
+        ...hardware.gpu,
+        architecture: neuralModels.detectGpuArchitecture(gpuName, effectiveProfile)
+      }
+    },
     neural: neuralStatus,
     mfg: mfgStatus,
     diagnostics: {
       gameName: path.basename(gameDir),
       graphicsApi: scan.chosen ? scan.chosen.apiLabel : 'Unknown',
+      hardwareProfile: effectiveProfile,
+      hardwareProfileLabel: neuralModels.getHardwareProfileInfo(effectiveProfile).label,
       neuralStatus: neuralStatus.overallBadge,
       mfgStatus: mfgStatus.statusBadge,
       dllConflicts: coExecution.dllConflicts,
@@ -327,6 +405,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     runtimeStack = 'baseline-310.9.1',
     hdrCompatibility = false,
     ensureStreamline = true,
+    hardwareProfile,
     payloadDir,
     userDataDir
   } = config;
@@ -336,6 +415,13 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
 
   const hardware = await detectHardwareEnvironment();
   const gpuName = hardware.gpu.name;
+  const existingManifest = backends.readManifest(gameDir);
+  const effectiveProfile = resolveHardwareProfile(hardwareProfile, gpuName, existingManifest?.hardwareProfile);
+  // RTX 50 系列桌面卡默认优先启用 oct2026-310.9.16 运行时管线（除非调用方显式指定）
+  const effectiveRuntimeStack = (effectiveProfile === 'rtx50_desktop' && !config.runtimeStack)
+    ? 'oct2026-310.9.16'
+    : runtimeStack;
+
   const scan = await scanGame(gameDir);
   if (!scan.chosen) throw Object.assign(new Error('未在游戏目录中找到可执行文件'), { code: 'errNoExe' });
   const exePath = scan.chosen.path;
@@ -351,7 +437,8 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     neuralResult = await neuralModels.applyNeuralModelSelection(gameDir, {
       mode: neuralMode,
       modelId: neuralModelId,
-      runtimeStack,
+      runtimeStack: effectiveRuntimeStack,
+      hardwareProfile: effectiveProfile,
       payloadDir: effectivePayloadDir,
       userDataDir,
       gpuName
@@ -361,6 +448,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     if (neuralMode !== 'off' && scan.chosen.bitness === 64 && effectivePayloadDir) {
       await journal.transaction(gameDir, async () => {
         const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
+        manifest.hardwareProfile = effectiveProfile;
         await apply.retireOldShaderCompiler(manifest, gameDir, exeDir, (code, params) => onLog({ code, params }));
 
         const destConsumer = path.join(exeDir, 'renodx-dlss5.addon64');
@@ -384,7 +472,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
             });
             await apply.enableAddonInIni(exeDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
           }
-          const srcDlss = runtimeStack === 'oct2026-310.9.16'
+          const srcDlss = effectiveRuntimeStack === 'oct2026-310.9.16'
             ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlss.dll')
             : path.join(effectivePayloadDir, 'streamline', 'nvngx_dlss.dll');
           if (fs.existsSync(srcDlss) && !fs.existsSync(path.join(exeDir, 'nvngx_dlss.dll'))) {
@@ -394,7 +482,32 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
             });
           }
           const reshadeCheck = scan.reshade;
-          if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
+          if (scan.chosen.api === 'vulkan') {
+            const vulkanLayer = require('./vulkan-layer');
+            const vkSrcDir = path.join(effectivePayloadDir, 'reshade-vulkan');
+            const vkTargetDir = path.join(
+              userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced'),
+              'reshade-vulkan'
+            );
+            if (fs.existsSync(path.join(vkSrcDir, 'ReShade64.dll'))) {
+              manifest.vulkanLayer = await vulkanLayer.register({
+                sourceDir: vkSrcDir,
+                targetDir: vkTargetDir,
+                gameDir,
+                bitness: 64
+              });
+            }
+            const staleDxgi = path.join(exeDir, 'dxgi.dll');
+            if (fs.existsSync(staleDxgi) && pe.versionMentions(staleDxgi, 'ReShade')) {
+              await journal.capture(gameDir, staleDxgi);
+              await fs.promises.chmod(staleDxgi, 0o666).catch(() => {});
+              await fs.promises.unlink(staleDxgi).catch(() => {});
+              if (Array.isArray(manifest.added)) {
+                const relDxgi = path.relative(gameDir, staleDxgi).toLowerCase();
+                manifest.added = manifest.added.filter((item) => String(item).toLowerCase() !== relDxgi);
+              }
+            }
+          } else if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
             const bundledReshade = path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll');
             if (fs.existsSync(bundledReshade)) {
               const hookFile = path.join(exeDir, 'dxgi.dll');
@@ -420,7 +533,9 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     // 若用户仅点击“安装 / 应用 MFG 配置”，但游戏目录中已有 renodx-dlss5.addon64 而缺失 nvngx_dlssnr.dll，自动补齐 nvngx_dlssnr.dll
     await neuralModels.applyNeuralModelSelection(gameDir, {
       mode: 'latest_compatible',
-      runtimeStack,
+      modelId: neuralModelId,
+      runtimeStack: effectiveRuntimeStack,
+      hardwareProfile: effectiveProfile,
       payloadDir: effectivePayloadDir,
       userDataDir,
       gpuName
@@ -431,17 +546,20 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
   if (mfgMode !== undefined) {
     mfgResult = await mfgManager.applyMfgConfiguration(gameDir, {
       mode: mfgMode,
-      runtimeStack,
+      runtimeStack: effectiveRuntimeStack,
       hdrCompatibility,
       upgradeDlssg: true,
-      payloadDir: effectivePayloadDir
+      hardwareProfile: effectiveProfile,
+      payloadDir: effectivePayloadDir,
+      userDataDir
     }, onLog);
 
     // 若启用了 MFG 且请求补齐缺失的 Streamline (sl.dlss_g.dll / sl.reflex.dll / sl.pcl.dll)
     if (mfgMode !== 'off' && ensureStreamline && effectivePayloadDir) {
       await journal.transaction(gameDir, async () => {
         const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
-        const slDir = runtimeStack === 'oct2026-310.9.16'
+        manifest.hardwareProfile = effectiveProfile;
+        const slDir = effectiveRuntimeStack === 'oct2026-310.9.16'
           ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16')
           : path.join(effectivePayloadDir, 'streamline');
 
@@ -463,24 +581,44 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     }
   }
 
-  // 3. 若两个模块同时处于激活状态且均使用 ReShade Addon，强制同步 RuntimeSelectionMode=1
+  // 3. 若两个模块同时处于激活状态且均使用 ReShade Addon，强制同步 LoadFromDllMain=renodx-mfgunlock.addon64 与 RuntimeSelectionMode=1；
+  //    并确保 [RenoDX.DLSS5] 保持 ConfigVersion=7 与对应档位的分辨率比例
   const reshadeIni = path.join(exeDir, 'ReShade.ini');
   const hasNrAddon = fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')) ||
     fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64'));
   const hasMfgAddon = fs.existsSync(path.join(exeDir, 'renodx-mfgunlock.addon64'));
-  if (hasNrAddon && hasMfgAddon && fs.existsSync(reshadeIni)) {
+  const isDesktopProfile = effectiveProfile === 'rtx40_desktop' || effectiveProfile === 'rtx50_desktop';
+  if ((hasNrAddon || hasMfgAddon) && fs.existsSync(reshadeIni)) {
     await journal.transaction(gameDir, async () => {
       const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
+      manifest.hardwareProfile = effectiveProfile;
       let iniText = feederConfig.readText(reshadeIni);
-      iniText = feederConfig.setIni(iniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode', '1');
+      iniText = feederConfig.setIni(iniText, 'ADDON', 'AddonPath', '.\\');
+      if (hasMfgAddon) {
+        iniText = feederConfig.setIni(iniText, 'ADDON', 'LoadFromDllMain', 'renodx-mfgunlock.addon64');
+        iniText = feederConfig.setIni(iniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode', '1');
+      }
+      if (hasNrAddon && neuralMode !== 'off') {
+        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'ConfigVersion', '7');
+        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRResolutionScale', isDesktopProfile ? '1' : '0.75');
+        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRFollowInputRes', '0');
+        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRHookPoint', '0');
+        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRMaxWorksets', isDesktopProfile ? '8' : '4');
+        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'UiLanguage', 'zh-Hans');
+      }
       await apply.writeTracked(manifest, gameDir, reshadeIni, iniText, { kind: 'config' });
       await apply.saveActiveManifest(gameDir, manifest);
     });
   }
 
-  const updatedStatus = await inspectCombinedStatus(gameDir, { payloadDir: effectivePayloadDir, userDataDir });
+  const updatedStatus = await inspectCombinedStatus(gameDir, {
+    payloadDir: effectivePayloadDir,
+    userDataDir,
+    hardwareProfile: effectiveProfile
+  });
   return {
     ok: true,
+    hardwareProfile: effectiveProfile,
     neuralResult,
     mfgResult,
     status: updatedStatus
@@ -488,6 +626,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
 }
 
 module.exports = {
+  resolveHardwareProfile,
   detectHardwareEnvironment,
   estimateVramBudget,
   evaluateCoExecutionChecks,

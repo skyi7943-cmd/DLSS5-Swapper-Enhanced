@@ -2022,23 +2022,66 @@ function resolvePayloadRoot() {
   return path.join(__dirname, 'payload');
 }
 
-ipcMain.handle('enhanced-hardware', async (_event, forceRefresh) => {
+ipcMain.handle('enhanced-set-profile', async (_event, profileId) => {
   try {
-    return { ok: true, hardware: await combinedManager.detectHardwareEnvironment(forceRefresh === true) };
+    const valid = ['rtx40_laptop', 'rtx40_desktop', 'rtx50_desktop'].includes(profileId) ? profileId : 'rtx40_laptop';
+    const state = loadState();
+    state.hardwareProfile = valid;
+    saveState(state);
+    return {
+      ok: true,
+      hardwareProfile: valid,
+      profileInfo: neuralModels.getHardwareProfileInfo(valid),
+      hardwareProfiles: neuralModels.HARDWARE_PROFILES
+    };
   } catch (err) {
     return { ok: false, message: err.message };
   }
 });
 
-ipcMain.handle('enhanced-models', async () => {
+ipcMain.handle('enhanced-hardware', async (_event, forceRefresh) => {
+  try {
+    const hw = await combinedManager.detectHardwareEnvironment(forceRefresh === true);
+    const state = loadState();
+    const activeProfile = combinedManager.resolveHardwareProfile(state.hardwareProfile, hw.gpu.name);
+    return {
+      ok: true,
+      hardwareProfile: activeProfile,
+      hardwareProfiles: neuralModels.HARDWARE_PROFILES,
+      hardware: {
+        ...hw,
+        activeProfile,
+        activeProfileInfo: neuralModels.getHardwareProfileInfo(activeProfile),
+        gpu: {
+          ...hw.gpu,
+          architecture: neuralModels.detectGpuArchitecture(hw.gpu.name, activeProfile)
+        }
+      }
+    };
+  } catch (err) {
+    return { ok: false, message: err.message };
+  }
+});
+
+ipcMain.handle('enhanced-models', async (_event, profileOverride) => {
   try {
     const hw = await combinedManager.detectHardwareEnvironment();
+    const state = loadState();
+    const activeProfile = combinedManager.resolveHardwareProfile(profileOverride || state.hardwareProfile, hw.gpu.name);
     const models = neuralModels.listNeuralModels({
       payloadDir: resolvePayloadRoot(),
       userDataDir: app.getPath('userData'),
-      gpuName: hw.gpu.name
+      gpuName: hw.gpu.name,
+      hardwareProfile: activeProfile
     });
-    return { ok: true, models, runtimeStacks: neuralModels.RUNTIME_STACKS, unlockers: mfgManager.MFG_UNLOCKERS };
+    return {
+      ok: true,
+      models,
+      runtimeStacks: neuralModels.RUNTIME_STACKS,
+      unlockers: mfgManager.MFG_UNLOCKERS,
+      hardwareProfile: activeProfile,
+      hardwareProfiles: neuralModels.HARDWARE_PROFILES
+    };
   } catch (err) {
     return { ok: false, message: err.message };
   }
@@ -2058,21 +2101,25 @@ ipcMain.handle('enhanced-import-model', async (_event, filePath, meta) => {
     }
     const record = neuralModels.importNeuralModel(targetPath, app.getPath('userData'), meta || {});
     const hw = await combinedManager.detectHardwareEnvironment();
-    const compat = neuralModels.evaluateModelGpuCompatibility(record, hw.gpu.name);
+    const state = loadState();
+    const activeProfile = combinedManager.resolveHardwareProfile(state.hardwareProfile, hw.gpu.name);
+    const compat = neuralModels.evaluateModelGpuCompatibility(record, hw.gpu.name, activeProfile);
     return { ok: true, model: { ...record, compatibility: compat } };
   } catch (err) {
     return { ok: false, code: err.code || 'errInvalidNeuralModel', message: err.message, details: err.details || null };
   }
 });
 
-ipcMain.handle('enhanced-status', async (_event, dir) => {
+ipcMain.handle('enhanced-status', async (_event, dir, profileOverride) => {
   if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.existsSync(dir)) {
     return { ok: false, message: '无效的游戏目录' };
   }
   try {
+    const state = loadState();
     return await combinedManager.inspectCombinedStatus(dir, {
       payloadDir: resolvePayloadRoot(),
-      userDataDir: app.getPath('userData')
+      userDataDir: app.getPath('userData'),
+      hardwareProfile: profileOverride || state.hardwareProfile
     });
   } catch (err) {
     return { ok: false, message: err.message };
@@ -2081,8 +2128,14 @@ ipcMain.handle('enhanced-status', async (_event, dir) => {
 
 ipcMain.handle('enhanced-apply', (event, dir, config) => exclusiveMutation(async () => {
   if (typeof dir !== 'string' || !path.isAbsolute(dir)) return { ok: false, message: '无效的游戏目录' };
+  const state = loadState();
+  if (config && config.hardwareProfile && ['rtx40_laptop', 'rtx40_desktop', 'rtx50_desktop'].includes(config.hardwareProfile)) {
+    state.hardwareProfile = config.hardwareProfile;
+    saveState(state);
+  }
   const send = (e) => event.sender.send('job', e);
   const result = await combinedManager.applyCombinedConfiguration(dir, {
+    hardwareProfile: state.hardwareProfile,
     ...(config || {}),
     payloadDir: resolvePayloadRoot(),
     userDataDir: app.getPath('userData')

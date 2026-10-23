@@ -107,10 +107,11 @@ contextBridge.exposeInMainWorld('lab', {
   restoreGame: (dir) => ipcRenderer.invoke('restore', dir),
   onJob: (handler) => ipcRenderer.on('job', (_e, event) => handler(event)),
   pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return null; } },
-  // ---- Enhanced Modules (DLSS 5 Neural Rendering + RTX 40 MFG + Diagnostics) ----
+  // ---- Enhanced Modules (DLSS 5 Neural Rendering + RTX 40/50 MFG + Diagnostics) ----
+  enhancedSetProfile: (profileId) => ipcRenderer.invoke('enhanced-set-profile', profileId),
   enhancedHardware: (forceRefresh) => ipcRenderer.invoke('enhanced-hardware', forceRefresh),
-  enhancedModels: () => ipcRenderer.invoke('enhanced-models'),
+  enhancedModels: (profileId) => ipcRenderer.invoke('enhanced-models', profileId),
   enhancedImportModel: (filePath, meta) => ipcRenderer.invoke('enhanced-import-model', filePath, meta),
-  enhancedStatus: (dir) => ipcRenderer.invoke('enhanced-status', dir),
+  enhancedStatus: (dir, profileId) => ipcRenderer.invoke('enhanced-status', dir, profileId),
   enhancedApply: (dir, config) => ipcRenderer.invoke('enhanced-apply', dir, config)
 });

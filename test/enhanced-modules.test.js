@@ -216,5 +216,113 @@ test('Phase 5 UI：前端包含三大功能区域与明确区分的四级状态�
   for (const label of ['已验证可用', '实验性支持', '不兼容', '尚未测试']) {
     assert.ok(uiJs.includes(label), `UI 明确区分状态：${label}`);
   }
+  // 中文三档硬件选择菜单
+  for (const profileLabel of ['笔记本 40 系列', '40 系桌面卡', '50 系列桌面卡']) {
+    assert.ok(uiJs.includes(profileLabel), `UI 包含中文硬件档位：${profileLabel}`);
+  }
 });
+
+test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模型兼容与桌面显卡 MFG 专项测试', async (t) => {
+  // 1. 验证以往带 Ti / D / Super 后缀的桌面卡正则识别修复
+  for (const desktop40 of ['NVIDIA GeForce RTX 4070Ti', 'NVIDIA GeForce RTX 4090D', 'NVIDIA GeForce RTX 4080 Super']) {
+    const arch = neuralModels.detectGpuArchitecture(desktop40);
+    assert.equal(arch.code, 'ada', `${desktop40} 应识别为 Ada`);
+    assert.equal(arch.sm, '89', `${desktop40} 应识别为 sm_89`);
+    assert.equal(arch.isLaptop, false, `${desktop40} 应识别为桌面卡`);
+  }
+  for (const desktop50 of ['NVIDIA GeForce RTX 5070Ti', 'NVIDIA GeForce RTX 5080', 'NVIDIA GeForce RTX 5090D']) {
+    const arch = neuralModels.detectGpuArchitecture(desktop50);
+    assert.equal(arch.code, 'blackwell', `${desktop50} 应识别为 Blackwell`);
+    assert.equal(arch.sm, '120', `${desktop50} 应识别为 sm_120`);
+    assert.equal(arch.isLaptop, false, `${desktop50} 应识别为桌面卡`);
+  }
+
+  // 2. 验证 310.8.SF-v2 与 310.9.16-oct2026 在三档硬件下全部本地就绪且已验证兼容
+  for (const profileId of ['rtx40_laptop', 'rtx40_desktop', 'rtx50_desktop']) {
+    const models = neuralModels.listNeuralModels({
+      payloadDir: PAYLOAD_DIR,
+      gpuName: 'NVIDIA GeForce RTX 4070 Laptop GPU',
+      hardwareProfile: profileId
+    });
+    const sfV2 = models.find((m) => m.id === '310.8.SF-v2');
+    const oct16 = models.find((m) => m.id === '310.9.16-oct2026');
+    assert.equal(sfV2.availableOnDisk, true, `${profileId} 下 310.8.SF-v2 必须本地就绪`);
+    assert.equal(sfV2.compatStatus, 'verified', `${profileId} 下 310.8.SF-v2 必须验证兼容`);
+    assert.equal(oct16.availableOnDisk, true, `${profileId} 下 310.9.16-oct2026 必须本地就绪`);
+    assert.equal(oct16.compatStatus, 'verified', `${profileId} 下 310.9.16-oct2026 必须验证兼容`);
+  }
+
+  // 3. 模拟游戏目录并分别测试 40 系桌面卡 (rtx40_desktop) 与 50 系桌面卡 (rtx50_desktop) 的 DLSS 5 + MFG 联合配置
+  const gameDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-desktop-profiles-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-desktop-userdata-'));
+  t.after(() => {
+    fs.rmSync(gameDir, { recursive: true, force: true });
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  });
+
+  const hostExeSrc = path.join(PAYLOAD_DIR, 'feeder', 'dlss5-feed-host64.exe');
+  const exePath = path.join(gameDir, 'GameDesktopDX12.exe');
+  fs.writeFileSync(exePath, Buffer.concat([fs.readFileSync(hostExeSrc), Buffer.from('\0D3D12CreateDevice\0')]));
+  fs.writeFileSync(path.join(gameDir, 'nvngx_dlss.dll'), fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlss.dll')));
+
+  // 测试档位 2：40 系桌面卡 (rtx40_desktop) + 310.9.16-oct2026 模型 + MFG x3
+  const resDesktop40 = await combinedManager.applyCombinedConfiguration(gameDir, {
+    hardwareProfile: 'rtx40_desktop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.9.16-oct2026',
+    mfgMode: 'x3',
+    runtimeStack: 'oct2026-310.9.16',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(resDesktop40.ok, true);
+  assert.equal(resDesktop40.hardwareProfile, 'rtx40_desktop');
+  assert.equal(resDesktop40.status.neural.currentModel.id, '310.9.16-oct2026');
+
+  const iniDesktop40 = fs.readFileSync(path.join(gameDir, 'ReShade.ini'), 'utf8');
+  // 40 系桌面卡 DLSS 5 必须解锁 100% 满血分辨率 (NRResolutionScale=1) 与 8 工作集缓冲池
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.DLSS5', 'NRResolutionScale'), '1');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.DLSS5', 'NRFollowInputRes'), '0');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.DLSS5', 'NRHookPoint'), '0');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.DLSS5', 'NRMaxWorksets'), '8');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.DLSS5', 'NRAutoMask'), '0');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.DLSS5', 'NRUICorrection'), '0');
+  // 40 系桌面卡 MFG 必须开启 DynamicMFG=1、原生输入模式 QualityGuardMode=0、V3 高锐度插值与 Reflex 低延迟护栏
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.MFGUnlock', 'ForceMultiplier'), '3');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.MFGUnlock', 'DynamicMFG'), '1');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.MFGUnlock', 'QualityGuardMode'), '0');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.MFGUnlock', 'TemporalFix'), '1');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.MFGUnlock', 'ExperimentalAdaptiveQuality'), '1');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.MFGUnlock', 'AdaptiveQualityProfile'), '2');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.MFGUnlock', 'IntermediateScatterRetention'), '1');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.MFGUnlock', 'RaiseFrameCeiling'), '1');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.MFGUnlock', 'LatencyGuardMode'), '0');
+  assert.equal(ini.getIni(iniDesktop40, 'RenoDX.MFGUnlock', 'ReflexModeOverride'), '0');
+
+  // 测试档位 3：50 系列桌面卡 (rtx50_desktop) + 310.8.SF-v2 模型 + MFG x4
+  const resDesktop50 = await combinedManager.applyCombinedConfiguration(gameDir, {
+    hardwareProfile: 'rtx50_desktop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x4',
+    runtimeStack: 'oct2026-310.9.16',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(resDesktop50.ok, true);
+  assert.equal(resDesktop50.hardwareProfile, 'rtx50_desktop');
+  assert.equal(resDesktop50.status.mfg.status, 'verified');
+
+  const iniDesktop50 = fs.readFileSync(path.join(gameDir, 'ReShade.ini'), 'utf8');
+  // 50 系桌面卡 MFG 必须开启 DynamicMFG=1、QualityGuardMode=0 并关闭所有 40 系二进制补丁，直通 Blackwell 原生硬件 Flip Metering
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'ForceMultiplier'), '4');
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'DynamicMFG'), '1');
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'QualityGuardMode'), '0');
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'TemporalFix'), '0');
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'BlackwellFrameworkKernels'), '0');
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'ForceFlipMeteringOff'), '0');
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'ExperimentalAdaptiveQuality'), '0');
+  assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'RaiseFrameCeiling'), '1');
+});
+
 

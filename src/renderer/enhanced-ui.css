@@ -259,12 +259,16 @@
 
 .enh-seg {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   background: var(--panel-2);
   padding: 4px;
   border-radius: 10px;
   border: 1px solid var(--stroke);
+}
+
+.enh-seg.enh-seg-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .enh-seg-btn {
@@ -480,4 +484,207 @@
   font-weight: 600;
   font-size: 11px;
   text-transform: uppercase;
+}
+
+/* 硬件专属优化档位三选一菜单 (笔记本 40 系列 / 40 系桌面卡 / 50 系列桌面卡) */
+.enh-profile-bar {
+  background: var(--panel);
+  border: 1px solid var(--stroke);
+  border-top-color: var(--edge, var(--stroke));
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
+}
+
+.enh-profile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.enh-profile-head h4 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.enh-profile-head span.sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.enh-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.enh-profile-btn {
+  appearance: none;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1.5px solid var(--stroke);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: all 0.16s ease;
+  color: var(--text);
+}
+
+.enh-profile-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.enh-profile-btn.active {
+  background: var(--panel);
+  border-color: var(--accent);
+  box-shadow: 0 3px 12px rgba(108, 193, 10, 0.2);
+}
+
+.enh-profile-btn-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.enh-profile-btn-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.enh-profile-btn-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(108, 193, 10, 0.14);
+  color: #5aa700;
+  white-space: nowrap;
+}
+:root[data-theme="dark"] .enh-profile-btn-tag {
+  color: #8be22b;
+}
+
+.enh-profile-btn-desc {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.38;
+}
+
+.enh-profile-summary {
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.enh-profile-summary small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* 精简后的三类核心加载按钮（单独加载 DLSS 5 / 单独加载 MFG / 同时加载双模块）与唯一总还原按钮 */
+.enh-actions-single {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+  margin-top: auto;
+}
+
+.enh-btn.single-load {
+  flex: 1;
+  background: rgba(108, 193, 10, 0.14);
+  color: #468600;
+  border: 1.5px solid rgba(108, 193, 10, 0.45);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 14px;
+  text-align: center;
+}
+:root[data-theme="dark"] .enh-btn.single-load {
+  color: #9be842;
+}
+.enh-btn.single-load:hover:not(:disabled) {
+  background: var(--accent);
+  color: #0b1106;
+  border-color: var(--accent-2);
+}
+
+.enh-btn.sm-import {
+  font-size: 11.5px;
+  padding: 8px 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.enh-master-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.enh-btn.master-load {
+  flex: 1 1 320px;
+  background: var(--accent);
+  color: #0b1106;
+  border: 1.5px solid var(--accent-2);
+  font-size: 14px;
+  font-weight: 700;
+  padding: 11px 18px;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(108, 193, 10, 0.25);
+  text-align: center;
+}
+.enh-btn.master-load:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.enh-btn.danger-restore {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #c52222;
+  background: rgba(239, 68, 68, 0.08);
+  padding: 10px 15px;
+  font-size: 13px;
+}
+:root[data-theme="dark"] .enh-btn.danger-restore {
+  color: #f87171;
+}
+.enh-btn.danger-restore:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: #ef4444;
+}
+
+/* 隐藏游戏抽屉底部原版遗留的重复英文按钮栏 (Install DLSS 5 / Restore originals) 与废弃社区按钮 (Add to community-tested games) */
+#sheet .sheet-actions,
+#sheet #shareResult,
+#sheet .gp-actions #doInstall,
+#sheet .gp-actions #doRestore {
+  display: none !important;
 }

@@ -672,11 +672,14 @@ async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
     log('addonEnabledInIni');
   }
   if (/^renodx-dlss5\.addon64$/i.test(addonName)) {
-    for (const sec of ['RenoDX DLSS', 'RenoDX.DLSS5']) {
-      const nrPasses = feederConfig.getIni(text, sec, 'NRPasses');
-      if (nrPasses && Number(nrPasses) > 1) {
-        text = feederConfig.setIni(text, sec, 'NRPasses', '1');
-        changed = true;
+    const isDesktopProfile = manifest && (manifest.hardwareProfile === 'rtx40_desktop' || manifest.hardwareProfile === 'rtx50_desktop');
+    if (!isDesktopProfile) {
+      for (const sec of ['RenoDX DLSS', 'RenoDX.DLSS5']) {
+        const nrPasses = feederConfig.getIni(text, sec, 'NRPasses');
+        if (nrPasses && Number(nrPasses) > 1) {
+          text = feederConfig.setIni(text, sec, 'NRPasses', '1');
+          changed = true;
+        }
       }
     }
     const uiLang = feederConfig.getIni(text, 'RenoDX.DLSS5', 'UiLanguage');

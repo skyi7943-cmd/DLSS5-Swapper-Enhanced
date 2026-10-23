@@ -730,6 +730,15 @@ void on_reshade_overlay(reshade::api::effect_runtime *) {
 extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_module) {
     if (!reshade::register_addon(addon, reshade_module)) return false;
     g_reshade_module = reshade_module;
+    // 在 Vulkan 隐式层模式（如《无人深空》NMS.exe）下，游戏启动阶段会多次创建并销毁临时 VkInstance；
+    // vulkan-1.dll 会在最后一个临时 VkInstance 销毁时对 ReShade64.dll 调用 FreeLibrary，
+    // 导致通过 LoadFromDllMain 注册的外部插件（如 renodx-mfgunlock.addon64）丢失注册表。
+    // 将 ReShade 宿主模块固定在进程内存中，确保跨临时 VkInstance 销毁周期保持所有插件与钩子存活。
+    HMODULE pinned_reshade = nullptr;
+    GetModuleHandleExW(
+        GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        reinterpret_cast<LPCWSTR>(reshade_module),
+        &pinned_reshade);
     exact_map(); // 预热哈希表
     install_imgui_hooks();
     patch_reshade_in_memory();

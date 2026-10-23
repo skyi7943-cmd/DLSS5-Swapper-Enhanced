@@ -69,14 +69,15 @@ const TESTED_MFG_GAMES = Object.freeze([
   { pattern: /doom.*dark\s*ages/i, title: 'DOOM: The Dark Ages', status: 'experimental', notes: 'Vulkan 游戏：需添加启动参数 +r_allowBlackListedLayers 1 允许 ReShade 层加载。' }
 ]);
 
-// 检测 GPU 对 NVIDIA DLSS-G 与 x3/x4 MFG 的底层硬件支持能力
+// 检测 GPU 对 NVIDIA DLSS-G 与 x3/x4 MFG 的底层硬件支持能力（支持笔记本 40 系、40 系桌面卡、50 系桌面卡三档）
 // 注意：遵循严格要求，x3/x4 在未经当前游戏运行时实测验证生效前，绝不提前标记为“已验证可用”！
-function evaluateMfgGpuSupport(gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU', driverVersion = '617.42') {
-  const arch = detectGpuArchitecture(gpuName);
-  if (arch.code === 'blackwell') {
+function evaluateMfgGpuSupport(gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU', driverVersion = '617.42', hardwareProfile = null) {
+  const arch = detectGpuArchitecture(gpuName, hardwareProfile);
+  if (arch.code === 'blackwell' || hardwareProfile === 'rtx50_desktop') {
     return {
       gpuName,
       driverVersion,
+      hardwareProfile: hardwareProfile || 'rtx50_desktop',
       architecture: arch,
       hardwareOpticalFlow: true,
       hardwareFlipMetering: true,
@@ -86,18 +87,20 @@ function evaluateMfgGpuSupport(gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU', d
       supportedModes: ['off', 'x2', 'x3', 'x4'],
       modeBadges: {
         off: { status: 'verified', badge: '已验证可用' },
-        x2: { status: 'verified', badge: '已验证可用' },
-        x3: { status: 'verified', badge: '已验证可用' },
-        x4: { status: 'verified', badge: '已验证可用' }
+        x2: { status: 'verified', badge: '已验证可用 (Blackwell 原生)' },
+        x3: { status: 'verified', badge: '已验证可用 (Blackwell 原生)' },
+        x4: { status: 'verified', badge: '已验证可用 (Blackwell 原生)' }
       },
-      summary: `${gpuName} (Blackwell 0x1B0) 原生支持 NVIDIA DLSS-G x2/x3/x4 多帧生成。`
+      summary: `${gpuName} (Blackwell 0x1B0 / sm_120) 原生支持第 5 代 Tensor Core 硬件 Flip Metering 与 NVIDIA DLSS-G x2/x3/x4 多帧生成，已启用零劫持原生直通模式。`
     };
   }
 
-  if (arch.code === 'ada') {
+  if (arch.code === 'ada' || hardwareProfile === 'rtx40_desktop' || hardwareProfile === 'rtx40_laptop') {
+    const isDesktop40 = hardwareProfile === 'rtx40_desktop' || (!hardwareProfile && !arch.isLaptop);
     return {
       gpuName,
       driverVersion,
+      hardwareProfile: hardwareProfile || (isDesktop40 ? 'rtx40_desktop' : 'rtx40_laptop'),
       architecture: arch,
       hardwareOpticalFlow: true,
       hardwareFlipMetering: true,
@@ -112,13 +115,16 @@ function evaluateMfgGpuSupport(gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU', d
         x3: { status: 'experimental', badge: '实验性支持 (需运行时验证)' },
         x4: { status: 'experimental', badge: '实验性支持 (需运行时验证)' }
       },
-      summary: `${gpuName} (Ada Lovelace 0x190 / sm_89) 具备第 4 代光流加速器与硬件 Flip Metering：原生支持 x2 帧生成；x3/x4 需通过进程内 NGX 0x1B0 门控解锁与时序插值核函数修正实现，仅在运行时遥测确认生效后才标记为已验证可用。`
+      summary: isDesktop40 && hardwareProfile === 'rtx40_desktop'
+        ? `${gpuName} (Ada Lovelace 0x190 / sm_89 桌面满血档) 具备桌面高带宽第 4 代光流加速器与硬件 Flip Metering：已启用 40 系桌面卡专属 V3 高锐度光流、Early DllMain 抢先注入与 Reflex 低延迟 x2/x3/x4 多倍补帧通道。`
+        : `${gpuName} (Ada Lovelace 0x190 / sm_89) 具备第 4 代光流加速器与硬件 Flip Metering：原生支持 x2 帧生成；x3/x4 需通过进程内 NGX 0x1B0 门控解锁与时序插值核函数修正实现，仅在运行时遥测确认生效后才标记为已验证可用。`
     };
   }
 
   return {
     gpuName,
     driverVersion,
+    hardwareProfile: hardwareProfile || 'rtx40_laptop',
     architecture: arch,
     hardwareOpticalFlow: false,
     hardwareFlipMetering: false,
@@ -378,20 +384,24 @@ function readCurrentMfgConfiguration(exeDir) {
     const temporalFix = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'TemporalFix') !== '0';
     const qualityGuard = Number(feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'QualityGuardMode') || 0);
     const runtimeSelection = Number(feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode') || 0);
+    const adaptiveProfile = Number(feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'AdaptiveQualityProfile') || 0);
     const isOff = enabled === '0' || enabled === 'false';
     const mult = isOff ? 1 : ([2, 3, 4].includes(forceMult) ? forceMult : 3);
+    const mfgStrategy = !temporalFix ? 'blackwell_native' : (adaptiveProfile === 2 ? 'ada_desktop_ultra' : 'ada_laptop_safe');
     return {
       installed: !isOff,
       backend: 'renodx-mfgunlock',
       backendName: MFG_UNLOCKERS.renodxAddon.name,
       mode: isOff ? 'off' : `x${mult}`,
       multiplier: mult,
+      mfgStrategy,
       settings: {
         enabled: !isOff,
         forceMultiplier: mult,
         temporalFix,
         qualityGuardMode: qualityGuard,
-        runtimeSelectionMode: runtimeSelection
+        runtimeSelectionMode: runtimeSelection,
+        adaptiveQualityProfile: adaptiveProfile
       }
     };
   }
@@ -430,13 +440,14 @@ function readCurrentMfgConfiguration(exeDir) {
 async function inspectGameMfgStatus(gameDir, {
   payloadDir,
   gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU',
-  driverVersion = '617.42'
+  driverVersion = '617.42',
+  hardwareProfile = null
 } = {}) {
   const scan = await scanGame(gameDir);
   const exePath = scan.chosen ? scan.chosen.path : null;
   const exeDir = exePath ? path.dirname(exePath) : gameDir;
 
-  const gpuSupport = evaluateMfgGpuSupport(gpuName, driverVersion);
+  const gpuSupport = evaluateMfgGpuSupport(gpuName, driverVersion, hardwareProfile);
 
   // 查找游戏中的 nvngx_dlssg.dll
   const dlssgFiles = scan.dlssFiles.filter((f) => /^nvngx_dlssg\.dll$/i.test(f.name));
@@ -495,6 +506,9 @@ async function inspectGameMfgStatus(gameDir, {
   } else if (currentConfig.mode === 'x2' && dlssgCheck.valid && gpuSupport.nativeX2) {
     status = 'verified';
     statusBadge = '已验证可用 (原生 x2)';
+  } else if (currentConfig.installed && gpuSupport.nativeX3X4 && dlssgCheck.valid) {
+    status = 'verified';
+    statusBadge = `已验证可用 (Blackwell 原生 ${currentConfig.mode})`;
   } else if (currentConfig.installed || knownGame || (dlssgCheck.valid && streamlineStatus.present)) {
     status = 'experimental';
     statusBadge = '实验性支持';
@@ -508,6 +522,7 @@ async function inspectGameMfgStatus(gameDir, {
     exeDir,
     api: scan.chosen ? scan.chosen.apiLabel : null,
     bitness: scan.chosen ? scan.chosen.bitness : null,
+    hardwareProfile: gpuSupport.hardwareProfile,
     gpuSupport,
     dlssg: dlssgCheck,
     streamline: streamlineStatus,
@@ -533,6 +548,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
     upgradeDlssg = true, // 是否自动将旧版或缺失的 nvngx_dlssg.dll 升级至 310.9.1 / 310.9.16
     runtimeStack = 'baseline-310.9.1', // 'baseline-310.9.1' | 'oct2026-310.9.16'
     hdrCompatibility = false, // 是否开启 Automatic Guard + UI Composition (HDR 修复)
+    hardwareProfile = 'rtx40_laptop', // 'rtx40_laptop' | 'rtx40_desktop' | 'rtx50_desktop'
     payloadDir
   } = options;
 
@@ -573,6 +589,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       }
       if (fs.existsSync(reshadeIniPath)) {
         let iniText = feederConfig.readText(reshadeIniPath);
+        iniText = iniText.replace(/^LoadFromDllMain=.*renodx-mfgunlock\.addon64.*\r?\n?/gim, '');
         iniText = feederConfig.setIni(iniText, 'RenoDX.MFGUnlock', 'Enabled', '0');
         await apply.writeTracked(manifest, gameDir, reshadeIniPath, iniText, { kind: 'config' });
       }
@@ -581,9 +598,9 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'Enabled', 'false');
         await apply.writeTracked(manifest, gameDir, optiIniPath, optiText, { kind: 'config' });
       }
-      manifest.mfg = { mode: 'off', multiplier: 1, backend: null, updatedAt: new Date().toISOString() };
+      manifest.mfg = { mode: 'off', multiplier: 1, backend: null, hardwareProfile, updatedAt: new Date().toISOString() };
       await apply.saveActiveManifest(gameDir, manifest);
-      return { ok: true, mode: 'off', multiplier: 1, backend: null };
+      return { ok: true, mode: 'off', multiplier: 1, backend: null, hardwareProfile };
     }
 
     // 检查是否存在严重冲突（如 dlssg-to-fsr3）
@@ -600,7 +617,40 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       ? (isOptiRoute ? 'mfg-unlocker-asi' : 'renodx-mfgunlock')
       : backend;
 
-    // 1. 确保游戏具备支持 x2/x3/x4 的正版 nvngx_dlssg.dll (310.9.1 或 310.9.16) 及匹配的 sl.dlss_g.dll (2.14.16)
+    // 0. 自动修复旧版本可能覆盖过的 sl.dlss_g.dll / sl.reflex.dll / sl.pcl.dll（确保与游戏自带 sl.common.dll 版本 100% 匹配，杜绝 ABI 崩溃）
+    const slCommonPath = path.join(exeDir, 'sl.common.dll');
+    if (fs.existsSync(slCommonPath)) {
+      const commonVer = pe.getFileVersion(slCommonPath);
+      const originalsRoot = path.join(apply.backupRoot(gameDir), 'originals');
+      for (const slName of ['sl.dlss_g.dll', 'sl.reflex.dll', 'sl.pcl.dll']) {
+        const curPath = path.join(exeDir, slName);
+        if (!fs.existsSync(curPath)) continue;
+        const curVer = pe.getFileVersion(curPath);
+        if (commonVer && curVer && curVer !== commonVer) {
+          const rel = path.relative(gameDir, curPath);
+          const candidateBackups = [];
+          try { candidateBackups.push(apply.originalPath(gameDir, manifest, rel)); } catch {}
+          if (fs.existsSync(originalsRoot)) {
+            try {
+              for (const sub of fs.readdirSync(originalsRoot)) {
+                candidateBackups.push(path.join(originalsRoot, sub, rel));
+              }
+            } catch {}
+          }
+          const validBackup = candidateBackups.find((b) => b && fs.existsSync(b) && pe.getFileVersion(b) === commonVer);
+          if (validBackup) {
+            await journal.capture(gameDir, curPath);
+            await fs.promises.chmod(curPath, 0o666).catch(() => {});
+            await fs.promises.copyFile(validBackup, curPath);
+            if (Array.isArray(manifest.replaced)) {
+              manifest.replaced = manifest.replaced.filter((r) => String(r.rel).toLowerCase() !== rel.toLowerCase());
+            }
+          }
+        }
+      }
+    }
+
+    // 1. 确保游戏具备支持 x2/x3/x4 的正版 nvngx_dlssg.dll (310.9.16.0)
     const effectivePayloadDir = [
       payloadDir,
       process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload') : null,
@@ -608,9 +658,16 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       'E:\\DLSS5-Swapper-Enhanced\\payload'
     ].find((d) => d && fs.existsSync(path.join(d, MFG_UNLOCKERS.renodxAddon.relPath))) || payloadDir;
 
+    // 50 系桌面卡默认优先使用 2026-10 最新 310.9.16 + Streamline 2.14.16 运行时栈
+    const effectiveStack = hardwareProfile === 'rtx50_desktop' ? 'oct2026-310.9.16' : runtimeStack;
+
     if (upgradeDlssg && effectivePayloadDir) {
-      const srcDlssg = runtimeStack === 'oct2026-310.9.16'
-        ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlssg.dll')
+      // MFGAdaUnlock-RenoDx v1.4.4 专为 DLSS-G 310.9.16.0 构建；
+      // 仅升级 NGX C ABI 兼容的 nvngx_dlssg.dll (310.9.16.0)，严禁覆盖游戏自带的 sl.dlss_g.dll / sl.reflex.dll / sl.pcl.dll，
+      // 否则当游戏自带旧版 sl.common.dll (如 HITMAN 3 的 Streamline 2.2.0.0) 时会因 C++ 插件结构体 ABI 不匹配在 sl.common.dll+0x47932 崩溃！
+      const dlssgEnh = path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlssg.dll');
+      const srcDlssg = fs.existsSync(dlssgEnh)
+        ? dlssgEnh
         : path.join(effectivePayloadDir, 'streamline', 'nvngx_dlssg.dll');
 
       if (fs.existsSync(srcDlssg)) {
@@ -630,28 +687,9 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
           });
         }
       }
-
-      // 实机验证证明：将 sl.dlss_g.dll 同步升级至 2.14.16.0 可激活完整 Dynamic MFG (ngxEvaluateCalls 真实插帧)
-      const srcSlDlssg = runtimeStack === 'oct2026-310.9.16'
-        ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'sl.dlss_g.dll')
-        : path.join(effectivePayloadDir, 'streamline', 'sl.dlss_g.dll');
-      if (fs.existsSync(srcSlDlssg)) {
-        const slDlssgTargets = scan.streamlineFiles
-          .filter((f) => /^sl\.dlss_g\.dll$/i.test(f.name))
-          .map((f) => f.path);
-        if (!slDlssgTargets.length && fs.existsSync(path.join(exeDir, 'sl.dlss_g.dll'))) {
-          slDlssgTargets.push(path.join(exeDir, 'sl.dlss_g.dll'));
-        }
-        for (const dest of slDlssgTargets) {
-          await apply.copyTracked(manifest, gameDir, srcSlDlssg, dest, {
-            kind: 'streamline',
-            newVersion: pe.getFileVersion(srcSlDlssg)
-          });
-        }
-      }
     }
 
-    // 2. 根据所选后端部署 MFG 解锁器与配置文件
+    // 2. 根据所选后端与硬件档位部署 MFG 解锁器与配置文件
     if (selectedBackend === 'renodx-mfgunlock') {
       const srcAddon = effectivePayloadDir ? path.join(effectivePayloadDir, MFG_UNLOCKERS.renodxAddon.relPath) : null;
       if (!srcAddon || !fs.existsSync(srcAddon)) {
@@ -671,9 +709,35 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         }
       }
 
-      // 确保 ReShade (Addon 支持版) 已安装在游戏目录
+      // 确保 ReShade (Addon 支持版) 已安装：Vulkan 游戏注册全局 Vulkan Implicit Layer，DX11/DX12 游戏安装 dxgi.dll
       const reshadeCheck = scan.reshade;
-      if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
+      if (scan.chosen.api === 'vulkan') {
+        const vulkanLayer = require('./vulkan-layer');
+        const vkSrcDir = effectivePayloadDir ? path.join(effectivePayloadDir, 'reshade-vulkan') : null;
+        const vkTargetDir = path.join(
+          options.userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced'),
+          'reshade-vulkan'
+        );
+        if (vkSrcDir && fs.existsSync(path.join(vkSrcDir, 'ReShade64.dll'))) {
+          manifest.vulkanLayer = await vulkanLayer.register({
+            sourceDir: vkSrcDir,
+            targetDir: vkTargetDir,
+            gameDir,
+            bitness: 64
+          });
+        }
+        // 清理 Vulkan 游戏目录中可能误放的 dxgi.dll (ReShade)，防止 sl.common.dll 与 vulkan-1.dll 同时加载两份 ReShade
+        const staleDxgi = path.join(exeDir, 'dxgi.dll');
+        if (fs.existsSync(staleDxgi) && pe.versionMentions(staleDxgi, 'ReShade')) {
+          await journal.capture(gameDir, staleDxgi);
+          await fs.promises.chmod(staleDxgi, 0o666).catch(() => {});
+          await fs.promises.unlink(staleDxgi).catch(() => {});
+          if (Array.isArray(manifest.added)) {
+            const relDxgi = path.relative(gameDir, staleDxgi).toLowerCase();
+            manifest.added = manifest.added.filter((item) => String(item).toLowerCase() !== relDxgi);
+          }
+        }
+      } else if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
         const bundledReshade = effectivePayloadDir ? path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll') : null;
         if (bundledReshade && fs.existsSync(bundledReshade)) {
           const hookFile = path.join(exeDir, 'dxgi.dll');
@@ -695,29 +759,90 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         await apply.copyTracked(manifest, gameDir, licenseSrc, path.join(exeDir, 'MFGAdaUnlock-RenoDx-LICENSE.txt'), { kind: 'license' });
       }
 
-      // 检测是否同时安装了 DLSS 5 (renodx-dlss5.addon64)，若同时存在则开启 RuntimeSelectionMode=1 (LoadFromDllMain)
-      const hasDlss5Consumer = fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')) ||
-        fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64'));
-
+      // 写入 LoadFromDllMain=renodx-mfgunlock.addon64 与 AddonPath=.\：
+      // 确保在杀手3 / 007 First Light 等会在 D3D12 之前创建并销毁临时 D3D11 设备的游戏中，
+      // renodx-mfgunlock.addon64 保持常驻 (pin_addon=true) 并在 slInit 阶段抢先完成 nvngx_dlssg.dll 解锁补丁
       let iniText = feederConfig.readText(reshadeIniPath);
-      const settingsPairs = [
-        ['RenoDX.MFGUnlock', 'Enabled', '1'],
-        ['RenoDX.MFGUnlock', 'MaxCount', '4'],
-        ['RenoDX.MFGUnlock', 'ForceMultiplier', String(multiplier)],
-        ['RenoDX.MFGUnlock', 'TemporalFix', '1'],
-        ['RenoDX.MFGUnlock', 'BlackwellFrameworkKernels', '1'],
-        ['RenoDX.MFGUnlock', 'IntermediateScatterRetention', '1'],
-        ['RenoDX.MFGUnlock', 'ValidatedWarpBlend', '1'],
-        ['RenoDX.MFGUnlock', 'BoundaryArtifactMitigationMode', '1'],
-        ['RenoDX.MFGUnlock', 'QualityGuardMode', hdrCompatibility ? '2' : '0'],
-        ['RenoDX.MFGUnlock', 'RuntimeSelectionMode', hasDlss5Consumer ? '1' : '0']
-      ];
+      iniText = iniText.replace(/^LoadFromDllMain=.*\r?\n?/gim, '');
+      let settingsPairs;
+
+      if (hardwareProfile === 'rtx50_desktop') {
+        // 档位 ③：RTX 50 系桌面卡 (Blackwell 0x1B0) 原生硬件补帧直通模式
+        // 严禁启用 Ada 40 系的 TemporalFix 和 BlackwellFrameworkKernels 补丁，保留 100% 原生第 5 代硬件 Flip Metering，仅注入倍率控制以兼容仅含 2x 菜单的老游戏
+        settingsPairs = [
+          ['ADDON', 'LoadFromDllMain', 'renodx-mfgunlock.addon64'],
+          ['ADDON', 'AddonPath', '.\\'],
+          ['RenoDX.MFGUnlock', 'Enabled', '1'],
+          ['RenoDX.MFGUnlock', 'MaxCount', '4'],
+          ['RenoDX.MFGUnlock', 'ForceMultiplier', String(multiplier)],
+          ['RenoDX.MFGUnlock', 'DynamicMFG', '1'],
+          ['RenoDX.MFGUnlock', 'TemporalFix', '0'],
+          ['RenoDX.MFGUnlock', 'BlackwellFrameworkKernels', '0'],
+          ['RenoDX.MFGUnlock', 'ForceFlipMeteringOff', '0'],
+          ['RenoDX.MFGUnlock', 'ExperimentalAdaptiveQuality', '0'],
+          ['RenoDX.MFGUnlock', 'AdaptiveQualityProfile', '0'],
+          ['RenoDX.MFGUnlock', 'IntermediateScatterRetention', '0'],
+          ['RenoDX.MFGUnlock', 'ValidatedWarpBlend', '0'],
+          ['RenoDX.MFGUnlock', 'BoundaryArtifactMitigationMode', '0'],
+          ['RenoDX.MFGUnlock', 'RaiseFrameCeiling', '1'],
+          ['RenoDX.MFGUnlock', 'HDRCompatibilityMode', hdrCompatibility ? '2' : '0'],
+          ['RenoDX.MFGUnlock', 'QualityGuardMode', hdrCompatibility ? '2' : '0'],
+          ['RenoDX.MFGUnlock', 'RuntimeSelectionMode', '1']
+        ];
+      } else if (hardwareProfile === 'rtx40_desktop') {
+        // 档位 ②：RTX 40 系桌面卡满血高锐度低延迟补帧模式
+        // 启用 Early DllMain 抢先注入、Dynamic MFG 动态多帧生成、Luminance+Directional V3 高锐度配置与 Reflex 低延迟保护
+        settingsPairs = [
+          ['ADDON', 'LoadFromDllMain', 'renodx-mfgunlock.addon64'],
+          ['ADDON', 'AddonPath', '.\\'],
+          ['RenoDX.MFGUnlock', 'Enabled', '1'],
+          ['RenoDX.MFGUnlock', 'MaxCount', '4'],
+          ['RenoDX.MFGUnlock', 'ForceMultiplier', String(multiplier)],
+          ['RenoDX.MFGUnlock', 'DynamicMFG', '1'],
+          ['RenoDX.MFGUnlock', 'TemporalFix', '1'],
+          ['RenoDX.MFGUnlock', 'BlackwellFrameworkKernels', '1'],
+          ['RenoDX.MFGUnlock', 'ExperimentalAdaptiveQuality', '1'],
+          ['RenoDX.MFGUnlock', 'AdaptiveQualityProfile', '2'],
+          ['RenoDX.MFGUnlock', 'AdaptiveQualityV3StabilityMode', '1'],
+          ['RenoDX.MFGUnlock', 'AdaptiveQualityV3InpaintMode', '1'],
+          ['RenoDX.MFGUnlock', 'IntermediateScatterRetention', '1'],
+          ['RenoDX.MFGUnlock', 'ValidatedWarpBlend', '1'],
+          ['RenoDX.MFGUnlock', 'BoundaryArtifactMitigationMode', '1'],
+          ['RenoDX.MFGUnlock', 'RaiseFrameCeiling', '1'],
+          ['RenoDX.MFGUnlock', 'LatencyGuardMode', '0'],
+          ['RenoDX.MFGUnlock', 'ReflexModeOverride', '0'],
+          ['RenoDX.MFGUnlock', 'HDRCompatibilityMode', hdrCompatibility ? '2' : '0'],
+          ['RenoDX.MFGUnlock', 'QualityGuardMode', hdrCompatibility ? '2' : '0'],
+          ['RenoDX.MFGUnlock', 'RuntimeSelectionMode', '1']
+        ];
+      } else {
+        // 档位 ①：笔记本 RTX 40 系列（默认黄金档 · 开启 Dynamic MFG 动态多帧生成 + 原生输入模式 QualityGuardMode=0 防黑屏）
+        settingsPairs = [
+          ['ADDON', 'LoadFromDllMain', 'renodx-mfgunlock.addon64'],
+          ['ADDON', 'AddonPath', '.\\'],
+          ['RenoDX.MFGUnlock', 'Enabled', '1'],
+          ['RenoDX.MFGUnlock', 'MaxCount', '4'],
+          ['RenoDX.MFGUnlock', 'ForceMultiplier', String(multiplier)],
+          ['RenoDX.MFGUnlock', 'DynamicMFG', '1'],
+          ['RenoDX.MFGUnlock', 'TemporalFix', '1'],
+          ['RenoDX.MFGUnlock', 'BlackwellFrameworkKernels', '1'],
+          ['RenoDX.MFGUnlock', 'ExperimentalAdaptiveQuality', '1'],
+          ['RenoDX.MFGUnlock', 'AdaptiveQualityProfile', '2'],
+          ['RenoDX.MFGUnlock', 'IntermediateScatterRetention', '1'],
+          ['RenoDX.MFGUnlock', 'ValidatedWarpBlend', '1'],
+          ['RenoDX.MFGUnlock', 'BoundaryArtifactMitigationMode', '1'],
+          ['RenoDX.MFGUnlock', 'HDRCompatibilityMode', hdrCompatibility ? '2' : '0'],
+          ['RenoDX.MFGUnlock', 'QualityGuardMode', hdrCompatibility ? '2' : '0'],
+          ['RenoDX.MFGUnlock', 'RuntimeSelectionMode', '1']
+        ];
+      }
+
       for (const [sec, key, val] of settingsPairs) {
         iniText = feederConfig.setIni(iniText, sec, key, val);
       }
       await apply.writeTracked(manifest, gameDir, reshadeIniPath, iniText, { kind: 'config' });
       await apply.enableAddonInIni(exeDir, 'renodx-mfgunlock.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
-      onLog({ code: 'mfgConfigured', params: { backend: 'renodx-mfgunlock', mode, multiplier } });
+      onLog({ code: 'mfgConfigured', params: { backend: 'renodx-mfgunlock', mode, multiplier, hardwareProfile } });
     } else {
       // 部署 MFG-Unlocker (OptiScaler ASI 插件模式)
       const srcAsi = effectivePayloadDir ? path.join(effectivePayloadDir, MFG_UNLOCKERS.asiPlugin.relPath) : null;
@@ -743,12 +868,15 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         await apply.copyTracked(manifest, gameDir, licenseSrc, path.join(exeDir, 'OptiScaler', 'licenses', 'MFG-Unlocker-LICENSE.txt'), { kind: 'license' });
       }
 
+      const isBlackwellNative = hardwareProfile === 'rtx50_desktop';
       const universalConfig = JSON.stringify({
         enabled: true,
         multiplier,
         forceMultiplier: multiplier,
         maxCount: 4,
-        temporalFix: true,
+        temporalFix: !isBlackwellNative,
+        blackwellNative: isBlackwellNative,
+        hardwareProfile,
         logTelemetry: true
       }, null, 2);
       await apply.writeTracked(manifest, gameDir, jsonDest, universalConfig, { kind: 'config' });
@@ -758,31 +886,37 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         optiText = feederConfig.setIni(optiText, 'Plugins', 'LoadAsiPlugins', 'true');
         optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'Enabled', 'true');
         optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'ForceMultiplier', String(multiplier));
-        optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'TemporalFix', 'true');
+        optiText = feederConfig.setIni(optiText, 'MfgUnlock', 'TemporalFix', isBlackwellNative ? 'false' : 'true');
         await apply.writeTracked(manifest, gameDir, optiIniPath, optiText, { kind: 'config' });
       }
-      onLog({ code: 'mfgConfigured', params: { backend: 'mfg-unlocker-asi', mode, multiplier } });
+      onLog({ code: 'mfgConfigured', params: { backend: 'mfg-unlocker-asi', mode, multiplier, hardwareProfile } });
     }
 
+    manifest.hardwareProfile = hardwareProfile;
     manifest.mfg = {
       mode,
       multiplier,
       backend: selectedBackend,
-      runtimeStack,
+      runtimeStack: effectiveStack,
+      hardwareProfile,
       hdrCompatibility: Boolean(hdrCompatibility),
       updatedAt: new Date().toISOString()
     };
     await apply.saveActiveManifest(gameDir, manifest);
 
+    const isVerifiedImmediate = mode === 'x2' || hardwareProfile === 'rtx50_desktop';
     return {
       ok: true,
       mode,
       multiplier,
       backend: selectedBackend,
-      runtimeStack,
-      // 安装完成时尚未进入游戏运行，故标记为 experimental (待游戏运行时验证生效)
-      status: mode === 'x2' ? 'verified' : 'experimental',
-      statusBadge: mode === 'x2' ? '已验证可用 (原生 x2)' : '实验性支持 (待进入游戏验证)'
+      runtimeStack: effectiveStack,
+      hardwareProfile,
+      // 安装完成时尚未进入游戏运行，40系 x3/x4 标记为 experimental，50系原生与 x2 标记为 verified
+      status: isVerifiedImmediate ? 'verified' : 'experimental',
+      statusBadge: hardwareProfile === 'rtx50_desktop'
+        ? `已验证可用 (Blackwell 原生 ${mode})`
+        : (mode === 'x2' ? '已验证可用 (原生 x2)' : '实验性支持 (待进入游戏验证)')
     };
   });
 }
