@@ -237,18 +237,43 @@ const RUNTIME_STACKS = Object.freeze([
 ]);
 
 function resolvePayloadDir(payloadDir) {
+  const os = require('os');
+  const tempDirs = [];
+  try {
+    const tmp = os.tmpdir();
+    for (const name of fs.readdirSync(tmp)) {
+      if (/^DLSS5-Swapper/i.test(name)) {
+        tempDirs.push(path.join(tmp, name, 'resources', 'payload'));
+      } else if (/^ns[a-z0-9]+\.tmp$/i.test(name)) {
+        tempDirs.push(path.join(tmp, name, 'app', 'resources', 'payload'));
+        tempDirs.push(path.join(tmp, name, '7z-out', 'resources', 'payload'));
+      }
+    }
+  } catch {}
+
   const candidates = [
     payloadDir,
     process.resourcesPath ? path.join(process.resourcesPath, 'payload') : null,
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload') : null,
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload') : null,
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload') : null,
+    ...tempDirs,
     path.resolve(__dirname, '..', '..', 'payload'),
     path.resolve(__dirname, '..', '..', 'build-output', 'payload'),
     'E:\\DLSS5-Swapper-Enhanced\\payload',
     'E:\\DLSS5-Swapper-Enhanced\\build-output\\payload'
   ].filter(Boolean);
+  // 优先返回包含完整 nvngx_dlssnr.dll 的 payload 目录
   for (const dir of candidates) {
     try {
-      if (fs.existsSync(path.join(dir, 'streamline', 'nvngx_dlssnr.dll')) ||
-          fs.existsSync(path.join(dir, 'renodx-dlss5.addon64'))) {
+      if (fs.existsSync(path.join(dir, 'streamline', 'nvngx_dlssnr.dll'))) {
+        return dir;
+      }
+    } catch {}
+  }
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(path.join(dir, 'renodx-dlss5.addon64'))) {
         return dir;
       }
     } catch {}
@@ -509,11 +534,41 @@ function writeCustomModelsIndex(userDataDir, rows) {
   fs.writeFileSync(path.join(root, 'index.json'), JSON.stringify(rows, null, 2), 'utf8');
 }
 
-// 列出所有已知与可用的 DLSS 5 神经渲染模型（合并内置 payload、数据库条目与用户合法导入的模型）
+// 列出所有已知与可用的 DLSS 5 神经渲染模型（合并内置 payload、持久化缓存、数据库条目与用户合法导入的模型）
 function listNeuralModels({ payloadDir, userDataDir, gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU', hardwareProfile = null } = {}) {
   const effectivePayloadDir = resolvePayloadDir(payloadDir);
-  const bundledPath = effectivePayloadDir ? path.join(effectivePayloadDir, 'streamline', 'nvngx_dlssnr.dll') : null;
-  const bundledInspection = bundledPath && fs.existsSync(bundledPath) ? inspectNeuralModelBinary(bundledPath) : null;
+  const persistentBundledPath = userDataDir
+    ? path.join(customModelsRoot(userDataDir), 'bundled-310.8.SF-v2.dll')
+    : null;
+  const candidateBundledPaths = [
+    effectivePayloadDir ? path.join(effectivePayloadDir, 'streamline', 'nvngx_dlssnr.dll') : null,
+    persistentBundledPath,
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'nvngx_dlssnr.dll') : null
+  ].filter(Boolean);
+
+  let bundledPath = null;
+  let bundledInspection = null;
+  for (const cand of candidateBundledPaths) {
+    if (fs.existsSync(cand)) {
+      const check = inspectNeuralModelBinary(cand);
+      if (check && check.valid) {
+        bundledPath = cand;
+        bundledInspection = check;
+        break;
+      }
+    }
+  }
+
+  // 自动将内置模型异步持久化备份至 userDataDir，彻底防止便携版运行期间 %TEMP% 被清理工具或二次启动删除
+  if (bundledPath && persistentBundledPath && path.resolve(bundledPath) !== path.resolve(persistentBundledPath)) {
+    try {
+      if (!fs.existsSync(persistentBundledPath)) {
+        fs.mkdirSync(path.dirname(persistentBundledPath), { recursive: true });
+        fs.promises.copyFile(bundledPath, persistentBundledPath).catch(() => {});
+      }
+    } catch {}
+  }
+
   const customRows = readCustomModelsIndex(userDataDir);
 
   const models = MODEL_DATABASE.map((entry) => {

@@ -409,9 +409,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     payloadDir,
     userDataDir
   } = config;
-  const effectivePayloadDir = mfgManager.resolvePayloadDir
-    ? mfgManager.resolvePayloadDir(payloadDir)
-    : payloadDir;
+  const effectivePayloadDir = payloadDir || path.resolve(__dirname, '..', '..', 'payload');
 
   const hardware = await detectHardwareEnvironment();
   const gpuName = hardware.gpu.name;
@@ -429,6 +427,27 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
 
   await require('./install-guards').assertGameClosed(gameDir, exePath);
 
+  // 判断游戏是否自带原生 DLSS 或 Streamline（排除由本软件在过往会话中新增的 DLL）
+  const prevManifest = backends.readManifest(gameDir);
+  const addedByUsSet = new Set(
+    (prevManifest && Array.isArray(prevManifest.added) ? prevManifest.added : [])
+      .map((r) => path.normalize(String(r)).toLowerCase())
+  );
+  const nativeDlssFiles = (scan.dlssFiles || []).filter((f) => {
+    const rel = path.normalize(path.relative(gameDir, f.path)).toLowerCase();
+    return !addedByUsSet.has(rel);
+  });
+  const nativeSlFiles = (scan.streamlineFiles || []).filter((f) => {
+    const rel = path.normalize(path.relative(gameDir, f.path)).toLowerCase();
+    return !addedByUsSet.has(rel);
+  });
+  const hasReplacedDlss = Boolean(
+    prevManifest &&
+    Array.isArray(prevManifest.replaced) &&
+    prevManifest.replaced.some((r) => /nvngx_dlss|_nvngx|sl\.dlss/i.test(String(r.rel || '')))
+  );
+  const hasNativeDlss = nativeDlssFiles.length > 0 || nativeSlFiles.length > 0 || hasReplacedDlss;
+
   let neuralResult = null;
   let mfgResult = null;
 
@@ -444,7 +463,8 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
       gpuName
     }, onLog);
 
-    // 若启用了神经渲染且游戏为 64 位，自动补齐或升级 renodx-dlss5.addon64 (v8.5.0-rc10) 与 ReShade
+    // 若启用了神经渲染且游戏为 64 位，自动补齐或升级 renodx-dlss5.addon64 (v8.5.0-rc10) 与 ReShade；
+    // 若游戏本身无原生 DLSS (!hasNativeDlss)，自动一并部署 Feeder 1.19.0 (dlss5-feed.addon64 + 着色器 + dlss5-feed.cfg)
     if (neuralMode !== 'off' && scan.chosen.bitness === 64 && effectivePayloadDir) {
       await journal.transaction(gameDir, async () => {
         const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
@@ -453,7 +473,6 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
 
         const destConsumer = path.join(exeDir, 'renodx-dlss5.addon64');
         const hasOtherConsumer = fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64')) ||
-          fs.existsSync(path.join(exeDir, 'dlss5-feed.addon64')) ||
           Boolean(scan.install?.optiscaler?.installed);
         const srcConsumer = path.join(effectivePayloadDir, 'renodx-dlss5.addon64');
         const consumerNeedsUpdate = fs.existsSync(srcConsumer) && (
@@ -472,57 +491,163 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
             });
             await apply.enableAddonInIni(exeDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
           }
-          const srcDlss = effectiveRuntimeStack === 'oct2026-310.9.16'
-            ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlss.dll')
-            : path.join(effectivePayloadDir, 'streamline', 'nvngx_dlss.dll');
-          if (fs.existsSync(srcDlss) && !fs.existsSync(path.join(exeDir, 'nvngx_dlss.dll'))) {
-            await apply.copyTracked(manifest, gameDir, srcDlss, path.join(exeDir, 'nvngx_dlss.dll'), {
-              kind: 'runtime',
-              newVersion: pe.getFileVersion(srcDlss)
-            });
-          }
-          const reshadeCheck = scan.reshade;
-          if (scan.chosen.api === 'vulkan') {
-            const vulkanLayer = require('./vulkan-layer');
-            const vkSrcDir = path.join(effectivePayloadDir, 'reshade-vulkan');
-            const vkTargetDir = path.join(
-              userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced'),
-              'reshade-vulkan'
-            );
-            if (fs.existsSync(path.join(vkSrcDir, 'ReShade64.dll'))) {
-              manifest.vulkanLayer = await vulkanLayer.register({
-                sourceDir: vkSrcDir,
-                targetDir: vkTargetDir,
-                gameDir,
-                bitness: 64
-              });
-            }
-            const staleDxgi = path.join(exeDir, 'dxgi.dll');
-            if (fs.existsSync(staleDxgi) && pe.versionMentions(staleDxgi, 'ReShade')) {
-              await journal.capture(gameDir, staleDxgi);
-              await fs.promises.chmod(staleDxgi, 0o666).catch(() => {});
-              await fs.promises.unlink(staleDxgi).catch(() => {});
-              if (Array.isArray(manifest.added)) {
-                const relDxgi = path.relative(gameDir, staleDxgi).toLowerCase();
-                manifest.added = manifest.added.filter((item) => String(item).toLowerCase() !== relDxgi);
-              }
-            }
-          } else if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
-            const bundledReshade = path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll');
-            if (fs.existsSync(bundledReshade)) {
-              const hookFile = path.join(exeDir, 'dxgi.dll');
-              const hookExisted = fs.existsSync(hookFile);
-              await apply.copyTracked(manifest, gameDir, bundledReshade, hookFile, { kind: 'reshade' });
-              manifest.reshade.installedByUs = !hookExisted;
-              manifest.reshade.file = 'dxgi.dll';
-            }
-          }
-          if (!manifest.route) manifest.route = 'native';
-          await apply.saveActiveManifest(gameDir, manifest);
         } else if (fs.existsSync(destConsumer)) {
           await apply.enableAddonInIni(exeDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
-          await apply.saveActiveManifest(gameDir, manifest);
         }
+
+        const srcDlss = effectiveRuntimeStack === 'oct2026-310.9.16'
+          ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlss.dll')
+          : path.join(effectivePayloadDir, 'streamline', 'nvngx_dlss.dll');
+        if (fs.existsSync(srcDlss) && !fs.existsSync(path.join(exeDir, 'nvngx_dlss.dll'))) {
+          await apply.copyTracked(manifest, gameDir, srcDlss, path.join(exeDir, 'nvngx_dlss.dll'), {
+            kind: 'runtime',
+            newVersion: pe.getFileVersion(srcDlss)
+          });
+        }
+
+        const reshadeCheck = scan.reshade;
+        if (scan.chosen.api === 'vulkan') {
+          const vulkanLayer = require('./vulkan-layer');
+          const vkSrcDir = path.join(effectivePayloadDir, 'reshade-vulkan');
+          const vkTargetDir = path.join(
+            userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced'),
+            'reshade-vulkan'
+          );
+          if (fs.existsSync(path.join(vkSrcDir, 'ReShade64.dll'))) {
+            manifest.vulkanLayer = await vulkanLayer.register({
+              sourceDir: vkSrcDir,
+              targetDir: vkTargetDir,
+              gameDir,
+              bitness: 64
+            });
+          }
+          const staleDxgi = path.join(exeDir, 'dxgi.dll');
+          if (fs.existsSync(staleDxgi) && pe.versionMentions(staleDxgi, 'ReShade')) {
+            await journal.capture(gameDir, staleDxgi);
+            await fs.promises.chmod(staleDxgi, 0o666).catch(() => {});
+            await fs.promises.unlink(staleDxgi).catch(() => {});
+            if (Array.isArray(manifest.added)) {
+              const relDxgi = path.relative(gameDir, staleDxgi).toLowerCase();
+              manifest.added = manifest.added.filter((item) => String(item).toLowerCase() !== relDxgi);
+            }
+          }
+        } else if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
+          const bundledReshade = path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll');
+          if (fs.existsSync(bundledReshade)) {
+            const hookFile = path.join(exeDir, 'dxgi.dll');
+            const hookExisted = fs.existsSync(hookFile);
+            await apply.copyTracked(manifest, gameDir, bundledReshade, hookFile, { kind: 'reshade' });
+            manifest.reshade.installedByUs = !hookExisted;
+            manifest.reshade.file = 'dxgi.dll';
+          }
+        }
+
+        // 若该游戏不具备原生 DLSS 且未安装 OptiScaler，自动部署 Feeder 1.19.0 深度与运动矢量馈送管线
+        if (!hasNativeDlss && !Boolean(scan.install?.optiscaler?.installed)) {
+          const srcFeeder119 = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0', 'dlss5-feed.addon64');
+          const srcFeederFallback = path.join(effectivePayloadDir, 'feeder', 'dlss5-feed.addon64');
+          const srcFeeder = fs.existsSync(srcFeeder119) ? srcFeeder119 : srcFeederFallback;
+          const destFeeder = path.join(exeDir, 'dlss5-feed.addon64');
+          if (fs.existsSync(srcFeeder)) {
+            await apply.copyTracked(manifest, gameDir, srcFeeder, destFeeder, {
+              kind: 'feeder',
+              newVersion: pe.getFileVersion(srcFeeder)
+            });
+            await apply.enableAddonInIni(exeDir, 'dlss5-feed.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
+          }
+
+          // 部署 ReShade 馈送着色器与纹理 (DLSS5_Feed.fx + vort_Motion.fx / LumeniteFX)
+          const copyDirTracked = async (srcRoot, destRoot) => {
+            const queue = [''];
+            while (queue.length) {
+              const relDir = queue.shift();
+              const srcDir = path.join(srcRoot, relDir);
+              for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+                const rel = path.join(relDir, entry.name);
+                if (entry.isDirectory()) queue.push(rel);
+                else if (entry.isFile()) {
+                  await apply.copyTracked(manifest, gameDir, path.join(srcRoot, rel), path.join(destRoot, rel), { kind: 'shader' });
+                }
+              }
+            }
+          };
+          const baseShaderRoot = path.join(effectivePayloadDir, 'feeder', 'reshade-shaders');
+          const destShaderRoot = path.join(exeDir, 'reshade-shaders');
+          if (fs.existsSync(baseShaderRoot)) {
+            await copyDirTracked(baseShaderRoot, destShaderRoot);
+          }
+          const enhancedFeedFx = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0', 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx');
+          if (fs.existsSync(enhancedFeedFx)) {
+            await apply.copyTracked(
+              manifest,
+              gameDir,
+              enhancedFeedFx,
+              path.join(destShaderRoot, 'Shaders', 'DLSS5_Feed.fx'),
+              { kind: 'shader' }
+            );
+          }
+
+          // 查找本机已缓存的 LumeniteFX 光流内核（若存在则使用 provider=3，否则回退至内置 vort_Motion.fx provider=2）
+          let provider = 2;
+          const compDir = path.join(
+            userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced'),
+            'components'
+          );
+          if (fs.existsSync(compDir)) {
+            try {
+              const findLumenite = (dir, depth = 0) => {
+                if (depth > 3) return null;
+                if (fs.existsSync(path.join(dir, 'Shaders', 'lumenite_Kernel.fx'))) return dir;
+                for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+                  if (ent.isDirectory() && /^lumenite/i.test(ent.name)) {
+                    const hit = findLumenite(path.join(dir, ent.name), depth + 1);
+                    if (hit) return hit;
+                  }
+                }
+                return null;
+              };
+              const lumRoot = findLumenite(compDir);
+              if (lumRoot) {
+                await copyDirTracked(path.join(lumRoot, 'Shaders'), path.join(destShaderRoot, 'Shaders'));
+                if (fs.existsSync(path.join(lumRoot, 'Textures'))) {
+                  await copyDirTracked(path.join(lumRoot, 'Textures'), path.join(destShaderRoot, 'Textures'));
+                }
+                provider = 3;
+              }
+            } catch { /* fallback to provider 2 */ }
+          }
+
+          const gameIniPath = path.join(exeDir, 'ReShade.ini');
+          let gameIni = feederConfig.configureGameReShade(feederConfig.readText(gameIniPath), provider);
+          gameIni = feederConfig.configureConsumer(gameIni, { host: false, xenia: false });
+          let presetFile = feederConfig.presetPath(exeDir, gameIni);
+          const presetRel = path.relative(gameDir, presetFile);
+          if (presetRel.startsWith('..') || path.isAbsolute(presetRel)) {
+            gameIni = feederConfig.setIni(gameIni, 'GENERAL', 'PresetPath', '.\\ReShadePreset.ini');
+            presetFile = path.join(exeDir, 'ReShadePreset.ini');
+          }
+          await apply.writeTracked(manifest, gameDir, gameIniPath, gameIni, { kind: 'config' });
+          await apply.writeTracked(
+            manifest,
+            gameDir,
+            presetFile,
+            feederConfig.configurePreset(feederConfig.readText(presetFile), provider, { xenia: false }),
+            { kind: 'config' }
+          );
+          const cfgPath = path.join(exeDir, 'dlss5-feed.cfg');
+          await apply.writeTracked(
+            manifest,
+            gameDir,
+            cfgPath,
+            feederConfig.configureFeed(feederConfig.readText(cfgPath)),
+            { kind: 'config' }
+          );
+          manifest.route = 'feeder';
+          manifest.feeder = { version: '1.19.0', provider };
+        } else {
+          if (!manifest.route) manifest.route = 'native';
+        }
+        await apply.saveActiveManifest(gameDir, manifest);
       });
     }
   } else if (

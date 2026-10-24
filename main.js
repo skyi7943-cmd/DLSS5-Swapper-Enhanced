@@ -379,10 +379,9 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'src', 'renderer', 'index.html'));
   win.once('ready-to-show', () => win.show());
-  // Close hides to the tray unless the person turned that off, or unless the
-  // app is genuinely quitting - Quit in the tray menu, or the OS asking.
+  // Close quits by default in portable builds unless closeToTray is explicitly enabled
   win.on('close', (event) => {
-    if (quitting || loadState().closeToTray === false || !ensureTray()) return;
+    if (quitting || loadState().closeToTray !== true || !ensureTray()) return;
     event.preventDefault();
     win.hide();
   });
@@ -2006,13 +2005,31 @@ const mfgManager = require('./src/core/mfg-manager');
 const combinedManager = require('./src/core/combined-manager');
 
 function resolvePayloadRoot() {
+  const tempDirs = [];
+  try {
+    const tmp = os.tmpdir();
+    for (const name of fs.readdirSync(tmp)) {
+      if (/^DLSS5-Swapper/i.test(name)) {
+        tempDirs.push(path.join(tmp, name, 'resources', 'payload'));
+      } else if (/^ns[a-z0-9]+\.tmp$/i.test(name)) {
+        tempDirs.push(path.join(tmp, name, 'app', 'resources', 'payload'));
+        tempDirs.push(path.join(tmp, name, '7z-out', 'resources', 'payload'));
+      }
+    }
+  } catch {}
+
   const candidates = [
     path.join(process.resourcesPath || '', 'payload'),
     path.join(__dirname, 'payload'),
     process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload') : null,
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload') : null,
     process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload') : null,
+    ...tempDirs,
     'E:\\DLSS5-Swapper-Enhanced\\payload'
   ].filter(Boolean);
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'streamline', 'nvngx_dlssnr.dll'))) return dir;
+  }
   for (const dir of candidates) {
     if (fs.existsSync(path.join(dir, 'enhanced', 'mfg', 'renodx-mfgunlock.addon64'))) return dir;
   }
