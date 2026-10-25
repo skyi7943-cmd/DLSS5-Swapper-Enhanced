@@ -887,6 +887,8 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
         path.join(exeDir, 'nvngx_dlssnr.dll'),
         path.join(exeDir, 'renodx-dlss5.addon64'),
         path.join(exeDir, 'renodx-dlss.addon64'),
+        path.join(exeDir, 'dlss5-feed.addon64'),
+        path.join(exeDir, 'dlss5-feed.addon32'),
         path.join(targetDir, 'renodx-dlss5.addon64'),
         path.join(targetDir, 'renodx-dlss.addon64')
       ];
@@ -983,13 +985,21 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     const feederConfig = require('./feeder-config');
     const reshadeIniPath = path.join(targetDir, 'ReShade.ini');
     const isDesktopProfile = hardwareProfile === 'rtx40_desktop' || hardwareProfile === 'rtx50_desktop';
+    const hasNativeStreamline = targetDir === exeDir && (
+      fs.existsSync(path.join(exeDir, 'sl.interposer.dll')) ||
+      fs.existsSync(path.join(exeDir, 'sl.common.dll')) ||
+      (Array.isArray(scan.streamlineFiles) && scan.streamlineFiles.length > 0)
+    );
     let iniText = feederConfig.readText(reshadeIniPath);
-    iniText = iniText.replace(/^EnableHooks=.*\r?\n?/gim, '');
+    if (!hasNativeStreamline) {
+      iniText = iniText.replace(/^EnableHooks=.*\r?\n?/gim, '');
+    }
     const nrSettings = [
       ['OVERLAY', 'UiLanguage', 'zh-Hans'],
       ['ADDON', 'AddonPath', '.\\'],
       ['RenoDX DLSS', 'NRPasses', '1'],
       ['RenoDX.DLSS5', 'ConfigVersion', '7'],
+      ...(hasNativeStreamline ? [['RenoDX.DLSS5', 'EnableHooks', '1']] : []),
       ['RenoDX.DLSS5', 'NeuralUplift', '1'],
       ['RenoDX.DLSS5', 'NRAutoMask', '0'],
       ['RenoDX.DLSS5', 'NRChainedHistory', '1'],

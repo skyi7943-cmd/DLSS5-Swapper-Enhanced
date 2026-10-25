@@ -448,11 +448,109 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
   );
   const hasNativeDlss = nativeDlssFiles.length > 0 || nativeSlFiles.length > 0 || hasReplacedDlss;
 
+  const renderingApi = require('../shared/rendering-api');
+  const { scanSource } = require('./scan');
+  const { ensureDgVoodoo, ensureLumenite } = require('./runtime-components');
+  const target = config.apiOverride && config.apiOverride !== 'auto'
+    ? renderingApi.effective(scan.chosen, config.apiOverride)
+    : scan.chosen;
+  const targetBitness = target.bitness || 64;
+  const targetApi = target.api || 'dxgi';
+  const targetApiLabel = target.apiLabel || 'DirectX 12';
+  const isLegacyApiOr32Bit = targetBitness === 32 ||
+    ['ddraw', 'd3d8', 'd3d9', 'd3d10', 'opengl'].includes(targetApi) ||
+    targetApiLabel === 'DirectX 10' ||
+    targetApiLabel === 'DirectX 11';
+  const needsFullFeeder = !hasNativeDlss || isLegacyApiOr32Bit;
+  const canRunMfg = targetBitness === 64 &&
+    ['dxgi', 'vulkan'].includes(targetApi) &&
+    targetApiLabel !== 'DirectX 10' &&
+    targetApiLabel !== 'DirectX 11';
+  const effectiveUserDataDir = userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced');
+
   let neuralResult = null;
   let mfgResult = null;
+  let feederDeployed = false;
+  let feederSummary = null;
 
-  // 1. 应用神经渲染设置（若调用方指定了 neuralMode）
-  if (neuralMode !== undefined) {
+  // 若用户在无原生 DLSS 的老游戏 (DX8/DX9/DX10/DX11/OpenGL/32位) 上点击“一键应用全部配置”或“单独加载 DLSS 5”，
+  // 全自动部署离线 dgVoodoo2 + ReShade + Feeder + LumeniteFX 光流着色器 + host64 + DLSS 5 神经渲染模型 + 全中文菜单！
+  // 注意：拥有原生 DLSS 的现代 64 位 DX12/Vulkan 游戏 (!needsFullFeeder) 保持原有黄金逻辑 100% 不变。
+  if (needsFullFeeder && neuralMode !== undefined && neuralMode !== 'off' && effectivePayloadDir) {
+    const probe = scanSource(effectivePayloadDir);
+    if (probe && probe.ok && probe.feeder) {
+      if (['d3d8', 'd3d9', 'ddraw'].includes(targetApi)) {
+        probe.feeder.dgVoodooDir = await ensureDgVoodoo(effectiveUserDataDir);
+        onLog({ code: 'legacyWrapperReady', params: { api: targetApi, bitness: targetBitness } });
+      }
+      try {
+        probe.feeder.lumeniteRoot = await ensureLumenite(effectiveUserDataDir);
+        onLog({ code: 'motionProviderReady', params: { provider: 'LumeniteFX Kernel 2.0' } });
+      } catch (err) {
+        probe.feeder.lumeniteRoot = null;
+        onLog({ code: 'motionProviderFallback', params: { error: err.message } });
+      }
+      const enhAddon64 = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0', 'dlss5-feed.addon64');
+      if (fs.existsSync(enhAddon64)) probe.feeder.addon64 = enhAddon64;
+      const enhFeedFx = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0', 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx');
+      if (fs.existsSync(enhFeedFx)) probe.feeder.feedShader = enhFeedFx;
+
+      const setupName = fs.existsSync(effectivePayloadDir)
+        ? fs.readdirSync(effectivePayloadDir).find((f) => /^ReShade_Setup_.*_Addon\.exe$/i.test(f))
+        : null;
+      const reshadeSetup = setupName ? path.join(effectivePayloadDir, setupName) : null;
+
+      await journal.transaction(gameDir, async () => {
+        const mf = await apply.applySwap({
+          gameDir,
+          exePath: target.path,
+          api: targetApi,
+          apiLabel: targetApiLabel,
+          bitness: targetBitness,
+          route: 'feeder',
+          emulator: target.emulator,
+          source: probe,
+          reshadeSetup,
+          vulkanLayerTarget: path.join(effectiveUserDataDir, 'reshade-vulkan'),
+          reshadeProxy: ['dxgi', 'd3d8', 'd3d9', 'd3d10', 'ddraw'].includes(targetApi) && targetApiLabel !== 'DirectX 12'
+            ? (config.reshadeProxy || 'dxgi')
+            : 'dxgi',
+          installReShade: true,
+          addMissingDlss: true,
+          addStreamline: false,
+          upgradeReShade: false
+        }, onLog);
+        if (fs.existsSync(enhFeedFx)) {
+          await apply.copyTracked(
+            mf,
+            gameDir,
+            enhFeedFx,
+            path.join(exeDir, 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx'),
+            { kind: 'shader' }
+          );
+        }
+        mf.hardwareProfile = effectiveProfile;
+        await apply.saveActiveManifest(gameDir, mf);
+      });
+
+      feederDeployed = true;
+      const wrapperTag = ['d3d8', 'd3d9', 'ddraw'].includes(targetApi) ? 'dgVoodoo2 + ' : '';
+      const opticalTag = probe.feeder.lumeniteRoot ? 'LumeniteFX Kernel 2.0 光流' : 'vort_Motion 光流';
+      const hostTag = targetBitness === 32 ? ' + host64 跨进程桥接' : '';
+      feederSummary = `${targetBitness}位 ${targetApiLabel} (${wrapperTag}Feeder + ${opticalTag}${hostTag})`;
+    }
+
+    neuralResult = await neuralModels.applyNeuralModelSelection(gameDir, {
+      mode: neuralMode,
+      modelId: neuralModelId,
+      runtimeStack: effectiveRuntimeStack,
+      hardwareProfile: effectiveProfile,
+      payloadDir: effectivePayloadDir,
+      userDataDir: effectiveUserDataDir,
+      gpuName
+    }, onLog);
+  } else if (neuralMode !== undefined) {
+    // 1. 应用神经渲染设置（现代原生 DLSS 游戏与关闭模式保持原有逻辑 100% 不变）
     neuralResult = await neuralModels.applyNeuralModelSelection(gameDir, {
       mode: neuralMode,
       modelId: neuralModelId,
@@ -669,49 +767,54 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
 
   // 2. 应用多帧生成设置（若调用方指定了 mfgMode）
   if (mfgMode !== undefined) {
-    mfgResult = await mfgManager.applyMfgConfiguration(gameDir, {
-      mode: mfgMode,
-      runtimeStack: effectiveRuntimeStack,
-      hdrCompatibility,
-      upgradeDlssg: true,
-      hardwareProfile: effectiveProfile,
-      payloadDir: effectivePayloadDir,
-      userDataDir
-    }, onLog);
+    if (!canRunMfg) {
+      if (mfgMode === 'off' && targetBitness === 64) {
+        mfgResult = await mfgManager.applyMfgConfiguration(gameDir, {
+          mode: 'off',
+          runtimeStack: effectiveRuntimeStack,
+          hdrCompatibility,
+          upgradeDlssg: false,
+          hardwareProfile: effectiveProfile,
+          payloadDir: effectivePayloadDir,
+          userDataDir
+        }, onLog);
+      } else {
+        mfgResult = {
+          ok: true,
+          mode: 'off',
+          requestedMode: mfgMode,
+          multiplier: 1,
+          skipped: mfgMode !== 'off',
+          reason: mfgMode !== 'off'
+            ? `当前游戏为 ${targetBitness} 位 ${targetApiLabel} 管线，已自动部署 Feeder + 光流着色器启用 DLSS 5 神经渲染；原生 DLSS-G 硬件多帧生成仅限 64 位 DirectX 12 / Vulkan 游戏，已自动跳过补帧模块以防崩溃。`
+            : null
+        };
+      }
+    } else {
+      mfgResult = await mfgManager.applyMfgConfiguration(gameDir, {
+        mode: mfgMode,
+        runtimeStack: effectiveRuntimeStack,
+        hdrCompatibility,
+        upgradeDlssg: true,
+        hardwareProfile: effectiveProfile,
+        payloadDir: effectivePayloadDir,
+        userDataDir
+      }, onLog);
 
-    // 若启用了 MFG 且请求补齐缺失的 Streamline (sl.dlss_g.dll / sl.reflex.dll / sl.pcl.dll)
-    if (mfgMode !== 'off' && ensureStreamline && effectivePayloadDir) {
-      await journal.transaction(gameDir, async () => {
-        const manifest = apply.beginManifest(gameDir, exePath, scan.chosen.api || 'dxgi');
-        manifest.hardwareProfile = effectiveProfile;
-        const slDir = effectiveRuntimeStack === 'oct2026-310.9.16'
-          ? path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16')
-          : path.join(effectivePayloadDir, 'streamline');
-
-        const hasOwnInterposer = scan.streamlineFiles.some((f) => /^sl\.interposer\.dll$/i.test(f.name));
-        if (!hasOwnInterposer && fs.existsSync(slDir)) {
-          for (const slFile of ['sl.interposer.dll', 'sl.common.dll', 'sl.dlss_g.dll', 'sl.reflex.dll', 'sl.pcl.dll']) {
-            const src = path.join(slDir, slFile);
-            const dest = path.join(exeDir, slFile);
-            if (fs.existsSync(src) && !fs.existsSync(dest)) {
-              await apply.copyTracked(manifest, gameDir, src, dest, {
-                kind: 'streamline',
-                newVersion: pe.getFileVersion(src)
-              });
-            }
-          }
-          await apply.saveActiveManifest(gameDir, manifest);
-        }
-      });
+      // 注意：绝不向原本没有 sl.interposer.dll 的游戏强行注入外源 sl.common.dll / sl.dlss_g.dll (2.14.16.0)，
+      // 也不覆盖游戏自带的 Streamline 组件，防止破坏游戏自身 Streamline ABI 导致帧生成选项变灰或误触发 Streamline Hook 检查。
     }
   }
 
   // 3. 若两个模块同时处于激活状态且均使用 ReShade Addon，强制同步 LoadFromDllMain=renodx-mfgunlock.addon64 与 RuntimeSelectionMode=1；
-  //    并确保 [RenoDX.DLSS5] 保持 ConfigVersion=7 与对应档位的分辨率比例
+  //    并确保 [RenoDX.DLSS5] 保持 ConfigVersion=7 与对应档位的分辨率比例（对于自带 Streamline 的游戏自动写入 EnableHooks=1）
   const reshadeIni = path.join(exeDir, 'ReShade.ini');
   const hasNrAddon = fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')) ||
     fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64'));
   const hasMfgAddon = fs.existsSync(path.join(exeDir, 'renodx-mfgunlock.addon64'));
+  const hasNativeStreamline = fs.existsSync(path.join(exeDir, 'sl.interposer.dll')) ||
+    fs.existsSync(path.join(exeDir, 'sl.common.dll')) ||
+    (Array.isArray(scan.streamlineFiles) && scan.streamlineFiles.length > 0);
   const isDesktopProfile = effectiveProfile === 'rtx40_desktop' || effectiveProfile === 'rtx50_desktop';
   if ((hasNrAddon || hasMfgAddon) && fs.existsSync(reshadeIni)) {
     await journal.transaction(gameDir, async () => {
@@ -725,6 +828,9 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
       }
       if (hasNrAddon && neuralMode !== 'off') {
         iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'ConfigVersion', '7');
+        if (hasNativeStreamline) {
+          iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'EnableHooks', '1');
+        }
         iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRResolutionScale', isDesktopProfile ? '1' : '0.75');
         iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRFollowInputRes', '0');
         iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRHookPoint', '0');
@@ -744,6 +850,8 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
   return {
     ok: true,
     hardwareProfile: effectiveProfile,
+    feederDeployed,
+    feederSummary,
     neuralResult,
     mfgResult,
     status: updatedStatus

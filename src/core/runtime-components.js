@@ -19,10 +19,47 @@ const DGVOODOO = {
   sha256: '5ffde6927f7355ca3fdd5d785b581256a8e6539fa13e395a891ade6ba1040850'
 };
 
+// 优先从内置离线 payload 查找已验证 SHA-256 的组件压缩包（彻底免除国内用户的 GitHub 网络依赖）
+function findBundledComponent(fileName, expectedSha256) {
+  const os = require('os');
+  const tempDirs = [];
+  try {
+    const tmp = os.tmpdir();
+    for (const name of fs.readdirSync(tmp)) {
+      if (/^DLSS5-Swapper/i.test(name)) {
+        tempDirs.push(path.join(tmp, name, 'resources', 'payload', 'enhanced', 'components', fileName));
+      } else if (/^ns[a-z0-9]+\.tmp$/i.test(name)) {
+        tempDirs.push(path.join(tmp, name, 'app', 'resources', 'payload', 'enhanced', 'components', fileName));
+        tempDirs.push(path.join(tmp, name, '7z-out', 'resources', 'payload', 'enhanced', 'components', fileName));
+      }
+    }
+  } catch {}
+  const candidates = [
+    process.resourcesPath ? path.join(process.resourcesPath, 'payload', 'enhanced', 'components', fileName) : null,
+    path.resolve(__dirname, '..', '..', 'payload', 'enhanced', 'components', fileName),
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload', 'enhanced', 'components', fileName) : null,
+    process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload', 'enhanced', 'components', fileName) : null,
+    ...tempDirs,
+    path.join('E:\\DLSS5-Swapper-Enhanced\\payload\\enhanced\\components', fileName)
+  ].filter(Boolean);
+  for (const cand of candidates) {
+    if (fs.existsSync(cand) && cached(cand, expectedSha256)) return cand;
+  }
+  return null;
+}
+
 async function ensureDgVoodoo(cacheRoot) {
   const base = path.join(path.resolve(cacheRoot), 'components', `dgVoodoo2-${DGVOODOO.version}`);
   const archive = base + '.zip';
-  if (!cached(archive, DGVOODOO.sha256)) await fetchVerified(DGVOODOO.url, DGVOODOO.sha256, archive);
+  if (!cached(archive, DGVOODOO.sha256)) {
+    const bundled = findBundledComponent(`dgVoodoo2-${DGVOODOO.version}.zip`, DGVOODOO.sha256);
+    if (bundled) {
+      await fs.promises.mkdir(path.dirname(archive), { recursive: true });
+      await fs.promises.copyFile(bundled, archive);
+    } else {
+      await fetchVerified(DGVOODOO.url, DGVOODOO.sha256, archive);
+    }
+  }
   // Re-extract the verified archive, never trust previously cached loose DLLs.
   await extractZip(archive, { dir: base });
   return base;
@@ -124,7 +161,13 @@ async function ensureLumenite(cacheRoot) {
 
   if (!cached(archive, LUMENITE.sha256)) {
     try { await fs.promises.unlink(archive); } catch {}
-    await fetchVerified(LUMENITE.url, LUMENITE.sha256, archive);
+    const bundled = findBundledComponent(`LumeniteFX-${LUMENITE.commit.slice(0, 8)}.zip`, LUMENITE.sha256);
+    if (bundled) {
+      await fs.promises.mkdir(path.dirname(archive), { recursive: true });
+      await fs.promises.copyFile(bundled, archive);
+    } else {
+      await fetchVerified(LUMENITE.url, LUMENITE.sha256, archive);
+    }
   }
 
   await fs.promises.rm(base, { recursive: true, force: true });

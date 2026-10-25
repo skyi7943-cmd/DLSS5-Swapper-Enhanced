@@ -307,7 +307,11 @@ function detectApi(file, imports) {
     const sibling = findCaseInsensitive(dir, name);
     // System DLLs live in System32; only the game's own modules sit here.
     if (!sibling || pe.getBitness(sibling) !== pe.getBitness(file)) continue;
-    const inner = apiFromNames(pe.getImports(sibling)) || apiFromMarkers(sibling);
+    // UnityPlayer.dll statically imports opengl32.dll for legacy fallback while
+    // resolving D3D11CreateDevice / D3D12CreateDevice dynamically at runtime.
+    const inner = /^unityplayer\.dll$/i.test(name)
+      ? (apiFromMarkers(sibling) || apiFromNames(pe.getImports(sibling)))
+      : (apiFromNames(pe.getImports(sibling)) || apiFromMarkers(sibling));
     if (inner) return { ...inner, via: 'module:' + name };
   }
 

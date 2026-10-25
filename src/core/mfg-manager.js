@@ -617,35 +617,42 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       ? (isOptiRoute ? 'mfg-unlocker-asi' : 'renodx-mfgunlock')
       : backend;
 
-    // 0. 自动修复旧版本可能覆盖过的 sl.dlss_g.dll / sl.reflex.dll / sl.pcl.dll（确保与游戏自带 sl.common.dll 版本 100% 匹配，杜绝 ABI 崩溃）
+    // 0. 自动修复旧版本可能覆盖过的 sl.interposer.dll / sl.common.dll / sl.dlss.dll / sl.dlss_g.dll / sl.reflex.dll / sl.pcl.dll
+    //    （只要 _DLSS5_Backup/originals 中存在原厂备份且当前文件版本被替换过，或与原厂 sl.interposer.dll 版本不一致，立即还原为原厂文件，杜绝 NBA 2K27 等游戏内帧生成选项变灰）
+    const originalsRoot = path.join(apply.backupRoot(gameDir), 'originals');
+    const findOriginalSlBackup = (relPath) => {
+      const candidates = [];
+      try { candidates.push(apply.originalPath(gameDir, manifest, relPath)); } catch {}
+      if (fs.existsSync(originalsRoot)) {
+        try {
+          for (const sub of fs.readdirSync(originalsRoot)) {
+            candidates.push(path.join(originalsRoot, sub, relPath));
+          }
+        } catch {}
+      }
+      return candidates.find((b) => b && fs.existsSync(b));
+    };
+    const slInterposerPath = path.join(exeDir, 'sl.interposer.dll');
     const slCommonPath = path.join(exeDir, 'sl.common.dll');
-    if (fs.existsSync(slCommonPath)) {
-      const commonVer = pe.getFileVersion(slCommonPath);
-      const originalsRoot = path.join(apply.backupRoot(gameDir), 'originals');
-      for (const slName of ['sl.dlss_g.dll', 'sl.reflex.dll', 'sl.pcl.dll']) {
-        const curPath = path.join(exeDir, slName);
-        if (!fs.existsSync(curPath)) continue;
-        const curVer = pe.getFileVersion(curPath);
-        if (commonVer && curVer && curVer !== commonVer) {
-          const rel = path.relative(gameDir, curPath);
-          const candidateBackups = [];
-          try { candidateBackups.push(apply.originalPath(gameDir, manifest, rel)); } catch {}
-          if (fs.existsSync(originalsRoot)) {
-            try {
-              for (const sub of fs.readdirSync(originalsRoot)) {
-                candidateBackups.push(path.join(originalsRoot, sub, rel));
-              }
-            } catch {}
-          }
-          const validBackup = candidateBackups.find((b) => b && fs.existsSync(b) && pe.getFileVersion(b) === commonVer);
-          if (validBackup) {
-            await journal.capture(gameDir, curPath);
-            await fs.promises.chmod(curPath, 0o666).catch(() => {});
-            await fs.promises.copyFile(validBackup, curPath);
-            if (Array.isArray(manifest.replaced)) {
-              manifest.replaced = manifest.replaced.filter((r) => String(r.rel).toLowerCase() !== rel.toLowerCase());
-            }
-          }
+    const origInterposer = findOriginalSlBackup(path.relative(gameDir, slInterposerPath));
+    const origCommon = findOriginalSlBackup(path.relative(gameDir, slCommonPath));
+    const targetSlVer = (origInterposer && pe.getFileVersion(origInterposer))
+      || (origCommon && pe.getFileVersion(origCommon))
+      || (fs.existsSync(slInterposerPath) && pe.getFileVersion(slInterposerPath))
+      || (fs.existsSync(slCommonPath) && pe.getFileVersion(slCommonPath));
+    for (const slName of ['sl.interposer.dll', 'sl.common.dll', 'sl.dlss.dll', 'sl.dlss_g.dll', 'sl.reflex.dll', 'sl.pcl.dll']) {
+      const curPath = path.join(exeDir, slName);
+      if (!fs.existsSync(curPath)) continue;
+      const curVer = pe.getFileVersion(curPath);
+      const rel = path.relative(gameDir, curPath);
+      const validBackup = findOriginalSlBackup(rel);
+      const backupVer = validBackup ? pe.getFileVersion(validBackup) : null;
+      if (validBackup && curVer && ((backupVer && curVer !== backupVer) || (targetSlVer && curVer !== targetSlVer))) {
+        await journal.capture(gameDir, curPath);
+        await fs.promises.chmod(curPath, 0o666).catch(() => {});
+        await fs.promises.copyFile(validBackup, curPath);
+        if (Array.isArray(manifest.replaced)) {
+          manifest.replaced = manifest.replaced.filter((r) => String(r.rel).toLowerCase() !== rel.toLowerCase());
         }
       }
     }

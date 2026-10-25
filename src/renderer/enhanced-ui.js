@@ -535,6 +535,16 @@
           if (typeof root.jobLog === 'function') root.jobLog(`错误: ${res.message}`);
           if (typeof root.log === 'function') root.log(`错误: ${res.message}`);
         } else {
+          if (res?.feederDeployed) {
+            const feederMsg = `Enhanced: 已自动为老游戏离线部署 ${res.feederSummary || 'Feeder + 光流着色器'} + DLSS 5 神经渲染 + 全中文菜单。`;
+            if (typeof root.jobLog === 'function') root.jobLog(feederMsg);
+            if (typeof root.log === 'function') root.log(feederMsg);
+          }
+          if (res?.mfgResult?.skipped && res?.mfgResult?.reason) {
+            const skipMsg = `提示: ${res.mfgResult.reason}`;
+            if (typeof root.jobLog === 'function') root.jobLog(skipMsg);
+            if (typeof root.log === 'function') root.log(skipMsg);
+          }
           if (typeof root.jobLog === 'function') root.jobLog('Enhanced: 配置已成功写入并建立事务备份。');
         }
       } catch (err) {
@@ -776,6 +786,7 @@
           <div class="enh-actions" style="padding-top:0">
             <button type="button" class="enh-btn" id="enhBrowseGameBtn">浏览并添加游戏目录…</button>
             <button type="button" class="enh-btn" id="enhGlobalImportBtn">导入自定义 nvngx_dlssnr.dll…</button>
+            <button type="button" class="enh-btn" id="enhCheckUpdateBtn">🔄 检查 GitHub 新版本</button>
           </div>
         </div>
 
@@ -846,6 +857,21 @@
       };
     }
 
+    const checkUpdateBtn = document.getElementById('enhCheckUpdateBtn');
+    if (checkUpdateBtn) {
+      checkUpdateBtn.onclick = async () => {
+        checkUpdateBtn.disabled = true;
+        checkUpdateBtn.textContent = '正在检查 GitHub 更新…';
+        try {
+          const answer = await root.lab.checkUpdate?.();
+          showReleaseUpdateBanner(answer, { manual: true });
+        } finally {
+          checkUpdateBtn.disabled = false;
+          checkUpdateBtn.textContent = '🔄 检查 GitHub 新版本';
+        }
+      };
+    }
+
     if (selectedViewGameDir && mount) {
       await refreshContainer(mount, selectedViewGameDir, activeGlobalProfile);
     } else if (mount) {
@@ -908,11 +934,65 @@
     };
   }
 
+  function showReleaseUpdateBanner(answer, { manual = false } = {}) {
+    if (!answer) return;
+    if (!answer.newer && !manual) return;
+    const activeView = document.querySelector('.view.active') || document.getElementById('view-home');
+    if (!activeView) return;
+    let banner = document.getElementById('enhUpdateBanner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'enhUpdateBanner';
+      banner.className = 'enh-update-banner';
+    }
+    if (banner.parentElement !== activeView) {
+      activeView.insertBefore(banner, activeView.firstChild);
+    }
+
+    const hasNew = Boolean(answer.newer && answer.latest);
+    const headline = hasNew
+      ? `🎉 发现 GitHub 新版本：v${escHtml(answer.latest)}（当前正在运行：v${escHtml(answer.current)}）`
+      : (answer.latest
+        ? `✅ 当前已是最新版本：v${escHtml(answer.current)}（GitHub 最新版：v${escHtml(answer.latest)}）`
+        : `⚠️ 暂未连接到 GitHub 更新服务器（当前版本：v${escHtml(answer.current)}，所有功能均支持 100% 离线使用）`);
+    const subline = answer.title
+      ? `版本说明：${escHtml(answer.title)}`
+      : (hasNew ? 'GitHub 已发布新版增强包，包含最新兼容性修复与功能升级，建议前往下载更新。' : '您可以随时点击右侧按钮前往 GitHub Releases 页面查看历史版本与更新说明。');
+
+    banner.innerHTML = `
+      <div class="enh-update-head">
+        <div class="enh-update-title">
+          <h4>${headline}</h4>
+          <span>${subline}</span>
+        </div>
+        <div class="enh-actions" style="padding-top:0">
+          <button type="button" class="enh-btn primary" id="enhUpdateDownloadBtn">🚀 前往 GitHub 查看并下载最新版 ↗</button>
+          <button type="button" class="enh-btn" id="enhUpdateCloseBtn">✕ 关闭提示</button>
+        </div>
+      </div>
+      ${answer.notes ? `<div class="enh-update-notes">${escHtml(answer.notes)}</div>` : ''}
+    `;
+
+    const dlBtn = banner.querySelector('#enhUpdateDownloadBtn');
+    if (dlBtn) {
+      dlBtn.onclick = () => {
+        if (typeof root.lab?.openProject === 'function') {
+          root.lab.openProject('releases');
+        }
+      };
+    }
+    const closeBtn = banner.querySelector('#enhUpdateCloseBtn');
+    if (closeBtn) {
+      closeBtn.onclick = () => banner.remove();
+    }
+  }
+
   root.enhancedUi = {
     HARDWARE_PROFILE_OPTIONS,
     mountInSheet,
     renderEnhancedView,
     renderStatusBadge,
-    buildThreePanelsHtml
+    buildThreePanelsHtml,
+    showReleaseUpdateBanner
   };
 })(window);

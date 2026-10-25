@@ -66,7 +66,7 @@ test('real IPC persists per-EXE choices, validates selection, uses effective rou
   old = { route: 'native', game: { exe: 'Game.exe', api: 'dxgi' } };
   const before = installs.length;
   assert.equal((await install('vulkan')).code, 'errBackendVulkanSwitch');
-  assert.equal((await install('d3d10')).code, 'unsupportedRendererHint');
+  assert.equal((await install('d3d8')).code, 'unsupportedRendererHint');
   assert.equal((await install('bogus')).code, 'errApiChoice');
   assert.equal(installs.length, before);
   for (const value of ['bogus', {}, 'dxgi', '__proto__']) assert.equal((await choose(value)).ok, false);

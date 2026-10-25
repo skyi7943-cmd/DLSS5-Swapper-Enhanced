@@ -861,10 +861,9 @@ function installOptions(d, pick, dir) {
 // A newer release exists, said once, in the corner. The link is the same
 // allowlisted releases page the About view uses; nothing downloads itself.
 async function showUpdateNotice() {
-  // Enhanced: 已彻底断开原作自动升级提示，防止覆盖增强版模块
   const link = $('statusUpdate');
   if (link) link.classList.add('hidden');
-  if (!link || !window.lab.checkUpdate || !window.lab.allowUpstreamUpdate) return;
+  if (!link || !window.lab.checkUpdate) return;
   let answer = null;
   try { answer = await window.lab.checkUpdate(); } catch { return; }
   if (!answer) return;
@@ -881,6 +880,9 @@ async function showUpdateNotice() {
   link.textContent = t('updateAvailable', answer.latest);
   link.classList.remove('muted');
   link.classList.remove('hidden');
+  if (window.enhancedUi && typeof window.enhancedUi.showReleaseUpdateBanner === 'function') {
+    window.enhancedUi.showReleaseUpdateBanner(answer);
+  }
 }
 
 function jobLog(line) {

@@ -410,6 +410,9 @@ The install will go through. If the neural pass never appears in game, 616.56 is
     setRoots: '在磁盘上找到',
     setPosters: '封面', setSaved: (n) => `已保存 ${n} 个`, setLang: '语言',
     aboutTitle: 'DLSS 5 Swapper Enhanced (增强版)', aboutBody: '基于 MIT 开源协议深度重构的独立增强分支：集成 DLSS 5 神经渲染、RTX 40 x3/x4 多帧生成、笔记本 8GB 显存优化与零崩溃游戏内全中文菜单。', aboutBy: '由 skyi7943-cmd 独立维护 · 基于 MIT 开源代码 (Original MIT by Rakan Alkhaldi) 衍生，与任何第三方收费网站无关',
+    updateAvailable: (version) => `🎉 发现新版本: v${version} (点击查看更新) ↗`,
+    updateCheckFailed: () => '暂未连接到 GitHub 更新检查（离线使用不受影响）',
+    latestReleases: '查看 GitHub 最新版本与更新说明',
     agoNow: '刚刚', agoMin: (n) => `${n} 分钟前`, agoHour: (n) => `${n} 小时前`, agoDay: (n) => `${n} 天前`,
     artFound: (a, b) => `封面：${b} 个中找到 ${a} 个`, libReady: (n, d) => `库已就绪 — ${n} 个游戏，${d} 个使用 DirectX 12`
   },

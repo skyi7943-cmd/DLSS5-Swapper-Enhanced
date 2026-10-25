@@ -325,4 +325,64 @@ test('三档硬件菜单 (rtx40_laptop / rtx40_desktop / rtx50_desktop)：全模
   assert.equal(ini.getIni(iniDesktop50, 'RenoDX.MFGUnlock', 'RaiseFrameCeiling'), '1');
 });
 
+test('老游戏全自动离线管线：32位 DX9 与 64位 DX10 无原生 DLSS 游戏一键部署 dgVoodoo2 + Feeder + LumeniteFX + host64 并支持无损还原', async (t) => {
+  const { writePe } = require('./fixtures/pe');
+  const gameDx9Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-legacy-dx9-32-'));
+  const gameDx10Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-legacy-dx10-64-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-legacy-userdata-'));
+  t.after(() => {
+    fs.rmSync(gameDx9Dir, { recursive: true, force: true });
+    fs.rmSync(gameDx10Dir, { recursive: true, force: true });
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  });
+
+  // 1. 构造 32 位 DirectX 9 老游戏（无原生 DLSS）
+  writePe(path.join(gameDx9Dir, 'LegacyDX9.exe'), { bitness: 32, text: 'Direct3DCreate9' });
+  const resDx9 = await combinedManager.applyCombinedConfiguration(gameDx9Dir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x3',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(resDx9.ok, true);
+  assert.equal(resDx9.feederDeployed, true);
+  assert.equal(resDx9.mfgResult.skipped, true);
+  // 验证离线 dgVoodoo2 + 32位 ReShade + dlss5-feed.addon32 + LumeniteFX + host64 全部就位
+  assert.equal(fs.existsSync(path.join(gameDx9Dir, 'D3D9.dll')), true);
+  assert.equal(fs.existsSync(path.join(gameDx9Dir, 'dgVoodoo.conf')), true);
+  assert.equal(fs.existsSync(path.join(gameDx9Dir, 'dxgi.dll')), true);
+  assert.equal(fs.existsSync(path.join(gameDx9Dir, 'dlss5-feed.addon32')), true);
+  assert.equal(fs.existsSync(path.join(gameDx9Dir, 'reshade-shaders', 'Shaders', 'lumenite_Kernel.fx')), true);
+  assert.equal(fs.existsSync(path.join(gameDx9Dir, 'host64', 'dlss5-feed-host64.exe')), true);
+  assert.equal(fs.existsSync(path.join(gameDx9Dir, 'host64', 'renodx-dlss5.addon64')), true);
+  assert.equal(fs.existsSync(path.join(gameDx9Dir, 'host64', 'nvngx_dlssnr.dll')), true);
+  assert.equal(await backends.restore(gameDx9Dir), true);
+  assert.equal(fs.existsSync(path.join(gameDx9Dir, 'D3D9.dll')), false);
+  assert.equal(fs.existsSync(path.join(gameDx9Dir, 'host64')), false);
+
+  // 2. 构造 64 位 DirectX 10 老游戏（无原生 DLSS）
+  writePe(path.join(gameDx10Dir, 'LegacyDX10.exe'), { bitness: 64, text: 'D3D10CreateDevice' });
+  const resDx10 = await combinedManager.applyCombinedConfiguration(gameDx10Dir, {
+    hardwareProfile: 'rtx40_desktop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x3',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(resDx10.ok, true);
+  assert.equal(resDx10.feederDeployed, true);
+  assert.equal(resDx10.mfgResult.skipped, true);
+  assert.equal(fs.existsSync(path.join(gameDx10Dir, 'dxgi.dll')), true);
+  assert.equal(fs.existsSync(path.join(gameDx10Dir, 'dlss5-feed.addon64')), true);
+  assert.equal(fs.existsSync(path.join(gameDx10Dir, 'renodx-dlss5.addon64')), true);
+  assert.equal(fs.existsSync(path.join(gameDx10Dir, 'nvngx_dlssnr.dll')), true);
+  assert.equal(fs.existsSync(path.join(gameDx10Dir, 'reshade-shaders', 'Shaders', 'lumenite_Kernel.fx')), true);
+  assert.equal(await backends.restore(gameDx10Dir), true);
+  assert.equal(fs.existsSync(path.join(gameDx10Dir, 'nvngx_dlssnr.dll')), false);
+});
+
+
 

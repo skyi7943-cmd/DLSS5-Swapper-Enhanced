@@ -1,7 +1,7 @@
-<h1 align="center">DLSS 5 Swapper Enhanced (v2.2.9-Enhanced)</h1>
+<h1 align="center">DLSS 5 Swapper Enhanced (v2.3.0-Enhanced)</h1>
 
 <p align="center">
-  <b>最新 DLSS 5 神经渲染 · RTX 40 系列动态多帧生成解锁 & RTX 50 系列原生满血直通 · 超分后省显存架构 · 游戏内 Home 菜单全量零崩溃简体中文化</b><br/>
+  <b>最新 DLSS 5 神经渲染 · RTX 40 系列动态多帧生成解锁 & RTX 50 系列原生满血直通 · 100% 离线一键支持 DX8/DX9/DX10/DX11/OpenGL/32位老游戏 · 游戏内 Home 菜单全量零崩溃简体中文化</b><br/>
   <sub>全面适配 RTX 40 系列笔记本（省显存优化）、RTX 40 系列桌面卡与 RTX 50 系列原生显卡 · 100% 永久免费开源</sub>
 </p>
 
@@ -100,7 +100,7 @@
 ## 五、快速使用指南
 
 ### 1. 支持原生 DLSS 的新游戏（DirectX 12 / Vulkan）
-1. 前往 **[Releases](../../releases)** 下载并运行最新便携版 **`DLSS5-Swapper-Enhanced-2.2.9-portable.exe`**。
+1. 前往 **[Releases](../../releases)** 下载并运行最新便携版 **`DLSS5-Swapper-Enhanced-2.3.0-portable.exe`**。
 2. 在左侧选中目标游戏，在顶部切换适合您显卡的硬件档位（**`💻 笔记本 40 系列`** / **`🖥️ 40 系桌面卡`** / **`🔥 50 系列桌面卡`**）。
 3. 点击下方极简三键中的任意一项：
    - **🚀 同时载入 DLSS 5 + MFG 多帧生成**（推荐）

@@ -427,8 +427,9 @@ async function applyFeeder(config, log) {
   }
   // DirectDraw, like DX8, exists only as a 32-bit wrapper: dgVoodoo ships
   // DDraw.dll under MS\x86 and nowhere else, because no 64-bit game ever used
-  // it. #150 is the Genesis emulators this reaches.
-  if (!['dxgi', 'ddraw', 'd3d8', 'd3d9', 'opengl', 'vulkan'].includes(api) ||
+  // it. #150 is the Genesis emulators this reaches. DirectX 10 presents via
+  // DXGI (dxgi.dll), which ReShade hooks identically to DirectX 11.
+  if (!['dxgi', 'ddraw', 'd3d8', 'd3d9', 'd3d10', 'opengl', 'vulkan'].includes(api) ||
       ((api === 'd3d8' || api === 'ddraw') && bitness !== 32)) {
     throw fail('errFeederApiUnsupported', { api, bitness });
   }
@@ -450,7 +451,8 @@ async function applyFeeder(config, log) {
 
   // D3D8/9 is translated to D3D11 first. ReShade must then hook DXGI; d3d9.dll
   // belongs to dgVoodoo and using ReShade under that same name would bypass it.
-  let reshadeApi = api;
+  // D3D10 creates its swapchain through DXGI directly.
+  let reshadeApi = api === 'd3d10' ? 'dxgi' : api;
   if (api === 'd3d8' || api === 'd3d9' || api === 'ddraw') {
     const dg = source.feeder.dgVoodooDir;
     if (!dg) throw fail('errDgVoodooMissing');
@@ -666,7 +668,7 @@ async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
         'E:\\DLSS5-Swapper-Enhanced\\payload\\enhanced\\zh-cn\\dlss5-zh-cn.addon64'
       ].filter(Boolean);
       const zhSrc = zhCandidates.find((p) => fs.existsSync(p));
-      if (zhSrc && fs.existsSync(exeDir)) {
+      if (zhSrc && fs.existsSync(exeDir) && !/\.addon32$/i.test(addonName)) {
         await copyOver(zhSrc, path.join(exeDir, 'dlss5-zh-cn.addon64'));
       }
     }
@@ -1050,6 +1052,19 @@ async function restoreFiles(gameDir, manifest, onLog) {
     }
   }
 
+  const exeDir = path.dirname(path.join(gameDir, manifest.game.exe));
+  for (const zhLeftover of [
+    path.join(exeDir, 'host64', 'dlss5-zh-cn.addon64'),
+    path.join(exeDir, 'dlss5-zh-cn.addon64')
+  ]) {
+    if (fs.existsSync(zhLeftover)) {
+      try {
+        await journal.capture(gameDir, zhLeftover);
+        await fs.promises.unlink(zhLeftover);
+      } catch {}
+    }
+  }
+
   for (const rel of [...(manifest.addedDirs || [])].sort((a, b) => b.length - a.length)) {
     const target = journal.safePath(gameDir, rel);
     if (!fs.existsSync(target)) continue;
@@ -1061,7 +1076,6 @@ async function restoreFiles(gameDir, manifest, onLog) {
     }
   }
 
-  const exeDir = path.dirname(path.join(gameDir, manifest.game.exe));
   const leftovers = [...(manifest.reshade?.filesAdded || []), 'dlss5-zh-cn.addon64'];
   // The hook DLL and runtime-generated ReShade configs go when we were the ones
   // who put ReShade there (any pre-existing ReShade.ini is in manifest.replaced

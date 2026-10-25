@@ -17,7 +17,9 @@
   }
   function routesFor(target, api = target && target.api) {
     if (!target || ![32, 64].includes(target.bitness)) return [];
-    if (api === 'd3d10' || (api === 'dxgi' && target.apiLabel === 'DirectX 10')) return [];
+    // DirectX 10 games present through DXGI (dxgi.dll), which ReShade hooks
+    // identically to DirectX 11 to drive the Feeder pipeline.
+    if (api === 'd3d10' || (api === 'dxgi' && target.apiLabel === 'DirectX 10')) return ['feeder'];
     // DirectDraw and DX8 both reach modern hardware only through dgVoodoo's
     // 32-bit wrapper, so the Feeder route is the only one either can take.
     if (api === 'd3d8' || api === 'ddraw') return target.bitness === 32 ? ['feeder'] : [];

@@ -1606,20 +1606,18 @@ function newerRelease(current, latest) {
 ipcMain.handle('update-check', async () => {
   if (updateAnswer) return updateAnswer;
   const current = app.getVersion();
-  // Enhanced: 在真实 Electron 运行环境中彻底断开原作 GitHub 在线升级检查，防止覆盖增强版功能
-  if (typeof app.isPackaged === 'boolean') {
-    updateAnswer = { current, latest: current, newer: false, disabled: true };
-    return updateAnswer;
-  }
   try {
     const response = await fetch('https://api.github.com/repos/skyi7943-cmd/DLSS5-Swapper-Enhanced/releases/latest', {
-      headers: { 'User-Agent': `DLSS5-Swapper/${current}`, Accept: 'application/vnd.github+json' },
+      headers: { 'User-Agent': `DLSS5-Swapper-Enhanced/${current}`, Accept: 'application/vnd.github+json' },
       signal: AbortSignal.timeout(8000)
     });
     if (!response.ok) throw Error(String(response.status));
     const release = await response.json();
     const latest = String(release.tag_name || '').replace(/^v/, '');
     updateAnswer = { current, latest, newer: newerRelease(current, latest) };
+    if (typeof release.body === 'string' && release.body.trim()) updateAnswer.notes = release.body.trim();
+    if (typeof release.name === 'string' && release.name.trim()) updateAnswer.title = release.name.trim();
+    if (typeof release.published_at === 'string' && release.published_at.trim()) updateAnswer.publishedAt = release.published_at.trim();
   } catch {
     // Offline, rate-limited or blocked: say nothing rather than worry anyone.
     updateAnswer = { current, latest: null, newer: false };
@@ -2151,8 +2149,12 @@ ipcMain.handle('enhanced-apply', (event, dir, config) => exclusiveMutation(async
     saveState(state);
   }
   const send = (e) => event.sender.send('job', e);
+  const scanForOverride = await scanGame(dir).catch(() => null);
+  const chosenExe = scanForOverride?.chosen?.path;
   const result = await combinedManager.applyCombinedConfiguration(dir, {
     hardwareProfile: state.hardwareProfile,
+    apiOverride: chosenExe ? apiPreference(state, dir, chosenExe) : 'auto',
+    reshadeProxy: chosenExe ? reshadeProxyPreference(state, dir, chosenExe) : 'dxgi',
     ...(config || {}),
     payloadDir: resolvePayloadRoot(),
     userDataDir: app.getPath('userData')
