@@ -1,6 +1,6 @@
 'use strict';
 // 模块 B：NVIDIA x3/x4 多帧生成独立管理模块 (MFG Manager)
-// 基于经过验证且 MIT 许可合规的开源方案 (mavismmg/MFGAdaUnlock-RenoDx v1.4.4 与 dashdogy/MFG-Unlocker v1.5.0-hotfix.1)，
+// 基于经过验证且 MIT 许可合规的开源方案 (mavismmg/MFGAdaUnlock-RenoDx v1.5.5 与 dashdogy/MFG-Unlocker v1.7.0)，
 // 在不篡改磁盘签名、不绕过反作弊、不冒充 FSR/第三方插帧的前提下，为 RTX 40 系列 (Ada Lovelace 0x190) 提供进程内原生
 // NVIDIA DLSS-G x2/x3/x4 多帧生成配置、注入器冲突检测、自动备份、一键恢复与真实运行时状态验证。
 
@@ -18,30 +18,30 @@ const { detectGpuArchitecture } = require('./neural-models');
 // 经过验证的开源 MFG 解锁组件指纹表 (MIT License)
 const MFG_UNLOCKERS = Object.freeze({
   renodxAddon: Object.freeze({
-    id: 'renodx-mfgunlock-1.4.4',
-    name: 'MFGAdaUnlock-RenoDx v1.4.4 (ReShade Add-on)',
+    id: 'renodx-mfgunlock-1.5.5',
+    name: 'MFGAdaUnlock-RenoDx v1.5.5 (ReShade Add-on · 兼容 621.01+ 驱动)',
     upstream: 'https://github.com/mavismmg/MFGAdaUnlock-RenoDx',
     license: 'MIT',
-    version: '1.4.4',
-    releaseDate: '2026-10-17',
+    version: '1.5.5',
+    releaseDate: '2026-10-23',
     fileName: 'renodx-mfgunlock.addon64',
     relPath: 'enhanced/mfg/renodx-mfgunlock.addon64',
-    size: 1199104,
-    sha256: '5a193d86c6f60a7f0f275799d66eef7f14bd0946cdbefd48a3237506c747d5cd',
+    size: 4556800,
+    sha256: 'e1529d0d20a5ec57c17beb740b14966e5d3ade24e229623d75029b900fd5943e',
     supportedDlssg: ['310.9.0.0', '310.9.1.0', '310.9.16.0'],
     supportedStreamline: ['2.13.0.0', '2.14.1.0', '2.14.16.0']
   }),
   asiPlugin: Object.freeze({
-    id: 'mfg-unlocker-1.5.0-hotfix.1',
-    name: 'MFG-Unlocker v1.5.0-hotfix.1 (OptiScaler ASI / Universal)',
+    id: 'mfg-unlocker-1.7.0',
+    name: 'MFG-Unlocker v1.7.0 (OptiScaler ASI / Universal)',
     upstream: 'https://github.com/dashdogy/MFG-Unlocker',
     license: 'MIT',
-    version: '1.5.0.937',
-    releaseDate: '2026-10-15',
+    version: '1.7.0.1145',
+    releaseDate: '2026-10-25',
     fileName: 'MFGUnlocker.dll',
     relPath: 'enhanced/mfg/MFGUnlocker.dll',
-    size: 8929280,
-    sha256: '4ac118f5cbb13a556c84979c2a2d2210a756dce172a9425ff62d870694747a2e',
+    size: 14445568,
+    sha256: 'e6b6e6b70a6ed3af839c9647a32fc22660ae6b2d655062c5c072246c91fc10c7',
     supportedDlssg: ['310.9.0.0', '310.9.1.0', '310.9.16.0']
   })
 });
@@ -839,6 +839,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
           ['RenoDX.MFGUnlock', 'IntermediateScatterRetention', '1'],
           ['RenoDX.MFGUnlock', 'ValidatedWarpBlend', '1'],
           ['RenoDX.MFGUnlock', 'BoundaryArtifactMitigationMode', '1'],
+          ['RenoDX.MFGUnlock', 'RaiseFrameCeiling', '1'],
           ['RenoDX.MFGUnlock', 'HDRCompatibilityMode', hdrCompatibility ? '2' : '0'],
           ['RenoDX.MFGUnlock', 'QualityGuardMode', hdrCompatibility ? '2' : '0'],
           ['RenoDX.MFGUnlock', 'RuntimeSelectionMode', '1']
