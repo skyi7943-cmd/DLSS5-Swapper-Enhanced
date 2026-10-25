@@ -653,6 +653,8 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
     // 1. 确保游戏具备支持 x2/x3/x4 的正版 nvngx_dlssg.dll (310.9.16.0)
     const effectivePayloadDir = [
       payloadDir,
+      process.resourcesPath ? path.join(process.resourcesPath, 'payload') : null,
+      process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload') : null,
       process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload') : null,
       process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload') : null,
       'E:\\DLSS5-Swapper-Enhanced\\payload'
@@ -770,6 +772,8 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         // 档位 ③：RTX 50 系桌面卡 (Blackwell 0x1B0) 原生硬件补帧直通模式
         // 严禁启用 Ada 40 系的 TemporalFix 和 BlackwellFrameworkKernels 补丁，保留 100% 原生第 5 代硬件 Flip Metering，仅注入倍率控制以兼容仅含 2x 菜单的老游戏
         settingsPairs = [
+          ['OVERLAY', 'UiLanguage', 'zh-Hans'],
+          ['RenoDX.DLSS5', 'UiLanguage', 'zh-Hans'],
           ['ADDON', 'LoadFromDllMain', 'renodx-mfgunlock.addon64'],
           ['ADDON', 'AddonPath', '.\\'],
           ['RenoDX.MFGUnlock', 'Enabled', '1'],
@@ -793,6 +797,8 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         // 档位 ②：RTX 40 系桌面卡满血高锐度低延迟补帧模式
         // 启用 Early DllMain 抢先注入、Dynamic MFG 动态多帧生成、Luminance+Directional V3 高锐度配置与 Reflex 低延迟保护
         settingsPairs = [
+          ['OVERLAY', 'UiLanguage', 'zh-Hans'],
+          ['RenoDX.DLSS5', 'UiLanguage', 'zh-Hans'],
           ['ADDON', 'LoadFromDllMain', 'renodx-mfgunlock.addon64'],
           ['ADDON', 'AddonPath', '.\\'],
           ['RenoDX.MFGUnlock', 'Enabled', '1'],
@@ -818,6 +824,8 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       } else {
         // 档位 ①：笔记本 RTX 40 系列（默认黄金档 · 开启 Dynamic MFG 动态多帧生成 + 原生输入模式 QualityGuardMode=0 防黑屏）
         settingsPairs = [
+          ['OVERLAY', 'UiLanguage', 'zh-Hans'],
+          ['RenoDX.DLSS5', 'UiLanguage', 'zh-Hans'],
           ['ADDON', 'LoadFromDllMain', 'renodx-mfgunlock.addon64'],
           ['ADDON', 'AddonPath', '.\\'],
           ['RenoDX.MFGUnlock', 'Enabled', '1'],

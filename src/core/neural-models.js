@@ -1040,6 +1040,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
       iniText = feederConfig.setIni(iniText, sec, k, v);
     }
     await apply.writeTracked(manifest, gameDir, reshadeIniPath, iniText, { kind: 'config' });
+    await apply.enableAddonInIni(targetDir, 'renodx-dlss5.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
 
     // 同步部署 DLSS 超分基础运行时栈（笔记本 40 系列与 40 系桌面卡默认使用黄金稳定版 310.9.1.0，防止与游戏内置 sl.dlss 发生 ABI 冲突导致 game_failed）
     const effectiveStack = runtimeStack || (hardwareProfile === 'rtx50_desktop' ? 'oct2026-310.9.16' : 'baseline-310.9.1');

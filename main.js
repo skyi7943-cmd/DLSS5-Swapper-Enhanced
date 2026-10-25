@@ -36,7 +36,7 @@ const guards = require('./src/core/install-guards');
 const compatibility = require('./src/core/compatibility');
 const antiCheatWarning = require('./src/shared/anti-cheat-warning');
 const featureI18n = require('./src/shared/feature-i18n');
-const featureText = (key, ...args) => featureI18n.t(loadState().lang, key, ...args);
+const featureText = (key, ...args) => featureI18n.t(loadState().lang || 'zh', key, ...args);
 const vulkanLayer = require('./src/core/vulkan-layer');
 const { HistoryStore, knownFolders, fromManifests } = require('./src/core/history');
 const gameMenu = require('./src/core/game-menu');
@@ -381,7 +381,7 @@ function createWindow() {
   win.once('ready-to-show', () => win.show());
   // Close quits by default in portable builds unless closeToTray is explicitly enabled
   win.on('close', (event) => {
-    if (quitting || loadState().closeToTray !== true || !ensureTray()) return;
+    if (quitting || loadState().closeToTray === false || !ensureTray()) return;
     event.preventDefault();
     win.hide();
   });
@@ -496,7 +496,7 @@ ipcMain.handle('boot', () => {
     skin: state.skin === 'two' ? 'two' : 'one',
     // Theme 2 can keep the sidebar as a rail of icons that opens on hover.
     rail: state.rail === 'on' ? 'on' : 'off',
-    lang: state.lang || 'en',
+    lang: state.lang || 'zh',
     groupGamesByStore: state.groupGamesByStore !== false,
     logo: asUrl('logo.png'),
     logoDark: asUrl('logo-dark.png')

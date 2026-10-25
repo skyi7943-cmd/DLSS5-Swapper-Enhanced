@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 const { t, setLang, getLang, dirOf, LANGS } = window.i18n;
-const state = { games: [], recents: [], history: [], newDlss: null, log: [], theme: 'light', skin: 'one', rail: 'off', lang: 'en', logo: {}, groupGamesByStore: true };
+const state = { games: [], recents: [], history: [], newDlss: null, log: [], theme: 'light', skin: 'one', rail: 'off', lang: 'zh', logo: {}, groupGamesByStore: true };
 const filters = { query: '', api: 'all', dlss: 'all', addon: 'all' };
 const gameFilters = window.gameFilters;
 

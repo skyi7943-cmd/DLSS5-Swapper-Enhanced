@@ -639,14 +639,30 @@ async function applyFeeder(config, log) {
 // multi-pass NRPasses>1 left behind by an earlier renodx-dlss.addon64 run.
 async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
   // 自动同步部署游戏内 Home 菜单全量简体中文化插件 dlss5-zh-cn.addon64
+  const tmpRoot = path.resolve(require('os').tmpdir()).toLowerCase();
+  const normExeDir = path.resolve(exeDir).toLowerCase();
+  const isRealGameDir = !normExeDir.startsWith(tmpRoot);
   try {
-    const tmpRoot = path.resolve(require('os').tmpdir()).toLowerCase();
-    const normExeDir = path.resolve(exeDir).toLowerCase();
-    if (!normExeDir.startsWith(tmpRoot)) {
+    if (isRealGameDir) {
+      const tempZhDirs = [];
+      try {
+        const tmp = require('os').tmpdir();
+        for (const name of fs.readdirSync(tmp)) {
+          if (/^DLSS5-Swapper/i.test(name)) {
+            tempZhDirs.push(path.join(tmp, name, 'resources', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64'));
+          } else if (/^ns[a-z0-9]+\.tmp$/i.test(name)) {
+            tempZhDirs.push(path.join(tmp, name, 'app', 'resources', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64'));
+            tempZhDirs.push(path.join(tmp, name, '7z-out', 'resources', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64'));
+          }
+        }
+      } catch {}
       const zhCandidates = [
+        process.resourcesPath ? path.join(process.resourcesPath, 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
         path.resolve(__dirname, '..', '..', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64'),
         process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
+        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
         process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
+        ...tempZhDirs,
         'E:\\DLSS5-Swapper-Enhanced\\payload\\enhanced\\zh-cn\\dlss5-zh-cn.addon64'
       ].filter(Boolean);
       const zhSrc = zhCandidates.find((p) => fs.existsSync(p));
@@ -683,7 +699,17 @@ async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
       }
     }
     const uiLang = feederConfig.getIni(text, 'RenoDX.DLSS5', 'UiLanguage');
-    if (uiLang && uiLang !== 'zh-Hans' && uiLang !== 'auto') {
+    if ((uiLang && uiLang !== 'zh-Hans' && uiLang !== 'auto') || (isRealGameDir && uiLang !== 'zh-Hans')) {
+      text = feederConfig.setIni(text, 'RenoDX.DLSS5', 'UiLanguage', 'zh-Hans');
+      changed = true;
+    }
+  }
+  if (isRealGameDir) {
+    if (feederConfig.getIni(text, 'OVERLAY', 'UiLanguage') !== 'zh-Hans') {
+      text = feederConfig.setIni(text, 'OVERLAY', 'UiLanguage', 'zh-Hans');
+      changed = true;
+    }
+    if (feederConfig.getIni(text, 'RenoDX.DLSS5', 'UiLanguage') !== 'zh-Hans') {
       text = feederConfig.setIni(text, 'RenoDX.DLSS5', 'UiLanguage', 'zh-Hans');
       changed = true;
     }

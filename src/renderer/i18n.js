@@ -715,7 +715,7 @@ The install will go through. If the neural pass never appears in game, 616.56 is
   }
 };
 
-let current = 'en';
+let current = 'zh';
 
 function setLang(code) {
   current = S[code] ? code : 'en';
