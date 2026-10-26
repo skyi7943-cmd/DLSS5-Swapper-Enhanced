@@ -749,12 +749,16 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       } else if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
         const bundledReshade = effectivePayloadDir ? path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll') : null;
         if (bundledReshade && fs.existsSync(bundledReshade)) {
-          const hookFile = path.join(exeDir, 'dxgi.dll');
+          const safeHook = apply.selectSafeReShadeHook
+            ? apply.selectSafeReShadeHook(exeDir, scan.chosen.api, scan.chosen.apiLabel, 'dxgi')
+            : { hook: 'dxgi.dll' };
+          const hookName = safeHook.hook || 'dxgi.dll';
+          const hookFile = path.join(exeDir, hookName);
           const hookExisted = fs.existsSync(hookFile);
           await apply.copyTracked(manifest, gameDir, bundledReshade, hookFile, { kind: 'reshade' });
           manifest.reshade.installedByUs = !hookExisted;
-          manifest.reshade.file = 'dxgi.dll';
-          onLog({ code: 'reshadeInstalled', params: { version: pe.getFileVersion(hookFile), file: 'dxgi.dll', bitness: 64 } });
+          manifest.reshade.file = hookName;
+          onLog({ code: 'reshadeInstalled', params: { version: pe.getFileVersion(hookFile), file: hookName, bitness: 64 } });
         }
       }
 

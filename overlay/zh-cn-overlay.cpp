@@ -489,7 +489,8 @@ bool hook_TabItemButton(const char *label, ImGuiTabItemFlags flags) {
     return g_orig.TabItemButton(translate_widget_label(label), flags);
 }
 
-// === ReShade 6.8.0.2155 内置 Generic Depth 与插件列表说明原位汉化 ===
+// === ReShade 6.8.0.2155 内置 Generic Depth 与插件列表说明原位汉化 (64位专属) ===
+#ifdef _WIN64
 
 struct LeaPatch {
     uint32_t lea_rva;
@@ -620,7 +621,7 @@ void patch_reshade_in_memory() {
                             name_str->replace_in_place_if_fits("DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93 (RenoDX)");
                             desc_str->replace_in_place_if_fits("\xe9\x80\x82\xe7\x94\xa8\xe4\xba\x8e NGX / Streamline \xe6\xb8\xb8\xe6\x88\x8f\xe7\x9a\x84 DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe5\x90\x8e\xe5\xa4\x84\xe7\x90\x86\xe7\xbb\x84\xe4\xbb\xb6");
                         } else if (nsv == "DLSS 5 Feed 1.17.0" || nsv == "DLSS 5 Feed 1.19.0") {
-                            name_str->replace_in_place_if_fits("DLSS 5 \xe6\xb7\xb1\xe5\xba\xa6\xe4\xb8\x8e\xe8\xbf\x90\xe5\x8a\xa8\xe9\xa6\x88\xe9\x80\x81\xe5\x99\xa8");
+                            name_str->replace_in_place_if_fits("DLSS 5 \xe6\xb7\xb1\xe5\xba\xa8\xe4\xb8\x8e\xe8\xbf\x90\xe5\x8a\xa8\xe9\xa6\x88\xe9\x80\x81\xe5\x99\xa8");
                             desc_str->replace_in_place_if_fits("\xe4\xb8\xba\xe6\x97\xa0\xe5\x8e\x9f\xe7\x94\x9f DLSS \xe7\x9a\x84 D3D11/D3D12/Vulkan/OpenGL \xe6\xb8\xb8\xe6\x88\x8f\xe5\x90\x91 DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe9\xa6\x88\xe9\x80\x81\xe6\xb7\xb1\xe5\xba\xa6\xe4\xb8\x8e\xe8\xbf\x90\xe5\x8a\xa8\xe7\x9f\xa2\xe9\x87\x8f (\xe9\x85\x8d\xe7\xbd\xae\xe4\xbf\x9d\xe5\xad\x98\xe4\xba\x8e dlss5-feed.cfg)\xe3\x80\x82");
                         } else if (nsv == "RenoDX DLSS") {
                             name_str->replace_in_place_if_fits("RenoDX\xe8\xb6\x85\xe5\x88\x86");
@@ -649,6 +650,94 @@ void unpatch_reshade_in_memory() {
     }
     g_gd_patched = false;
 }
+
+#else // !_WIN64 (32位游戏跨进程 DLSS 5 神经渲染控制面板与汉化支持)
+
+bool g_gd_patched = true;
+void patch_reshade_in_memory() { g_reshade_patched = true; }
+void unpatch_reshade_in_memory() {}
+
+using feeder_overlay_cb_t = void(__cdecl *)(reshade::api::effect_runtime *);
+feeder_overlay_cb_t g_feeder32_cb = nullptr;
+bool g_feeder32_searched = false;
+bool g_overlay_open = false;
+int g_last_home_tab_frame = -100;
+int g_last_dlss5_tab_frame = -100;
+
+constexpr const char *kDlss5TabTitle =
+    "DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93###DLSS 5 Neural Rendering";
+constexpr const char *kDlss5SideWindowTitle =
+    "DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93 (32\xe4\xbd\x8d\xe8\xb7\xa8\xe8\xbf\x9b\xe7\xa8\x8b\xe5\xbc\x95\xe6\x93\x8e)###DLSS5_32Bit_SidePanel";
+
+feeder_overlay_cb_t find_feeder32_overlay_callback() {
+    if (g_feeder32_cb) return g_feeder32_cb;
+    if (g_feeder32_searched) return nullptr;
+
+    HMODULE mod = GetModuleHandleW(L"dlss5-feed.addon32");
+    if (!mod) return nullptr;
+
+    g_feeder32_searched = true;
+    auto *base = reinterpret_cast<uint8_t *>(mod);
+    auto *dos = reinterpret_cast<IMAGE_DOS_HEADER *>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return nullptr;
+    auto *nt = reinterpret_cast<IMAGE_NT_HEADERS32 *>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return nullptr;
+
+    const uint32_t image_size = nt->OptionalHeader.SizeOfImage;
+    if (image_size < 0x4000) return nullptr;
+
+    // 匹配 dlss5-feed.addon32 中调用 ReShadeRegisterOverlay(nullptr, cb) 的指令序列：
+    // 85 c0 74 0c 68 <cb_va> 6a 00 ff d0 83 c4 08 c3
+    for (uint32_t rva = 0x1000; rva + 16 <= image_size; ++rva) {
+        const uint8_t *p = base + rva;
+        if (p[0] == 0x85 && p[1] == 0xC0 &&
+            p[2] == 0x74 && p[3] == 0x0C &&
+            p[4] == 0x68 &&
+            p[9] == 0x6A && p[10] == 0x00 &&
+            p[11] == 0xFF && p[12] == 0xD0 &&
+            p[13] == 0x83 && p[14] == 0xC4 && p[15] == 0x08) {
+            uint32_t cb_addr = 0;
+            memcpy(&cb_addr, p + 5, sizeof(uint32_t));
+            const uintptr_t mod_start = reinterpret_cast<uintptr_t>(base);
+            const uintptr_t mod_end = mod_start + image_size;
+            if (cb_addr >= mod_start + 0x1000 && cb_addr < mod_end) {
+                g_feeder32_cb = reinterpret_cast<feeder_overlay_cb_t>(static_cast<uintptr_t>(cb_addr));
+                return g_feeder32_cb;
+            }
+        }
+    }
+    return nullptr;
+}
+
+void draw_32bit_dlss5_panel_contents(reshade::api::effect_runtime *runtime) {
+    ImGui::TextColored(
+        ImVec4(0.45f, 0.92f, 0.35f, 1.0f),
+        "\xe2\x97\x8f DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe5\xb7\xb2\xe6\xbf\x80\xe6\xb4\xbb (32\xe4\xbd\x8d\xe6\xb8\xb8\xe6\x88\x8f -> host64 64\xe4\xbd\x8d\xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe7\xae\xa1\xe7\xba\xbf)");
+    ImGui::Separator();
+    if (feeder_overlay_cb_t cb = find_feeder32_overlay_callback()) {
+        cb(runtime);
+    } else {
+        ImGui::TextWrapped(
+            "\xe6\xad\xa3\xe5\x9c\xa8\xe7\xad\x89\xe5\xbe\x85 32 \xe4\xbd\x8d DLSS 5 \xe9\xa6\x88\xe9\x80\x81\xe5\x99\xa8 (dlss5-feed.addon32) \xe5\x88\x9d\xe5\xa7\x8b\xe5\x8c\x96...");
+    }
+}
+
+void on_draw_32bit_dlss5_tab(reshade::api::effect_runtime *runtime) {
+    g_last_dlss5_tab_frame = ImGui::GetFrameCount();
+    draw_32bit_dlss5_panel_contents(runtime);
+}
+
+bool on_open_overlay(reshade::api::effect_runtime *, bool open, reshade::api::input_source) {
+    g_overlay_open = open;
+    return false;
+}
+
+bool on_overlay_technique(reshade::api::effect_runtime *, reshade::api::effect_technique) {
+    g_last_home_tab_frame = ImGui::GetFrameCount();
+    return false;
+}
+
+#endif // _WIN64
 
 void install_imgui_hooks() {
     if (g_table_hooked) return;
@@ -719,10 +808,41 @@ void remove_imgui_hooks() {
     g_table_hooked = false;
 }
 
-void on_reshade_overlay(reshade::api::effect_runtime *) {
+void on_reshade_overlay(reshade::api::effect_runtime *runtime) {
     if (!g_gd_patched || !g_reshade_patched) {
         patch_reshade_in_memory();
     }
+#ifndef _WIN64
+    const int cur_frame = ImGui::GetFrameCount();
+    const bool home_visible = g_overlay_open || (cur_frame - g_last_home_tab_frame <= 1);
+    const bool tab_active = (cur_frame - g_last_dlss5_tab_frame <= 1);
+    if (home_visible && !tab_active) {
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        if (display.x > 100.0f && display.y > 100.0f) {
+            float left_edge = display.x * 0.36f + 16.0f;
+            if (left_edge < 240.0f) left_edge = 240.0f;
+            if (left_edge > 560.0f) left_edge = 560.0f;
+            float avail_w = display.x - left_edge - 8.0f;
+            if (avail_w < 260.0f) {
+                left_edge = display.x > 400.0f ? (display.x - 392.0f) : 8.0f;
+                avail_w = display.x - left_edge - 8.0f;
+            }
+            float win_w = avail_w > 540.0f ? 540.0f : avail_w;
+            float win_h = display.y - 16.0f;
+            if (win_h > 780.0f) win_h = 780.0f;
+            ImGui::SetNextWindowPos(ImVec2(left_edge, 8.0f), ImGuiCond_Appearing);
+            ImGui::SetNextWindowSize(ImVec2(win_w, win_h), ImGuiCond_Appearing);
+        }
+        if (ImGui::Begin(kDlss5SideWindowTitle, nullptr, ImGuiWindowFlags_NoCollapse)) {
+            ImGui::PushID("DLSS5_SidePanel");
+            draw_32bit_dlss5_panel_contents(runtime);
+            ImGui::PopID();
+        }
+        ImGui::End();
+    }
+#else
+    (void)runtime;
+#endif
 }
 
 } // namespace
@@ -743,11 +863,21 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
     install_imgui_hooks();
     patch_reshade_in_memory();
     reshade::register_event<reshade::addon_event::reshade_overlay>(on_reshade_overlay);
+#ifndef _WIN64
+    reshade::register_event<reshade::addon_event::reshade_open_overlay>(on_open_overlay);
+    reshade::register_event<reshade::addon_event::reshade_overlay_technique>(on_overlay_technique);
+    reshade::register_overlay(kDlss5TabTitle, on_draw_32bit_dlss5_tab);
+#endif
     reshade::log::message(reshade::log::level::info, "DLSS 5 Swapper Enhanced: Simplified Chinese UI localization layer active.");
     return true;
 }
 
 extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon, HMODULE reshade_module) {
+#ifndef _WIN64
+    reshade::unregister_overlay(kDlss5TabTitle, on_draw_32bit_dlss5_tab);
+    reshade::unregister_event<reshade::addon_event::reshade_overlay_technique>(on_overlay_technique);
+    reshade::unregister_event<reshade::addon_event::reshade_open_overlay>(on_open_overlay);
+#endif
     reshade::unregister_event<reshade::addon_event::reshade_overlay>(on_reshade_overlay);
     unpatch_reshade_in_memory();
     remove_imgui_hooks();

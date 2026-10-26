@@ -198,8 +198,14 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
   const exeDir = scan.chosen ? path.dirname(scan.chosen.path) : gameDir;
   const bothActive = neuralStatus.mode !== 'off' && mfgStatus.currentConfig.mode !== 'off';
 
-  // 1. 各模块的 DLL 是否冲突
-  const dllConflicts = [...(mfgStatus.conflicts || [])];
+  // 1. 各模块的 DLL 是否冲突（若当前未开启 MFG 补帧模块，则忽略仅针对 MFG 的 API/位数提示，防止 DX8/DX9/DX10/DX11/32位老游戏误报红色“不兼容”）
+  const mfgActive = Boolean(mfgStatus.currentConfig?.installed && mfgStatus.currentConfig?.mode && mfgStatus.currentConfig?.mode !== 'off');
+  const dllConflicts = [...(mfgStatus.conflicts || [])].filter((c) => {
+    if (!mfgActive && (c.code === 'UNSUPPORTED_API_FOR_MFG' || c.code === 'UNSUPPORTED_BITNESS_FOR_MFG')) {
+      return false;
+    }
+    return true;
+  });
   const hasReshadeAddonNr = fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')) ||
     fs.existsSync(path.join(exeDir, 'renodx-dlss.addon64'));
   const hasReshadeAddonMfg = fs.existsSync(path.join(exeDir, 'renodx-mfgunlock.addon64'));
@@ -308,6 +314,46 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
       : '当前游戏目录未注入修改，处于原始状态。'
   };
 
+  // 8. 破解版 / 离线免安装版 / 老版本 DLSS 深度兼容与补丁保护状态
+  const addedRelSet = new Set(
+    (manifest && Array.isArray(manifest.added) ? manifest.added : [])
+      .map((r) => path.normalize(String(r)).toLowerCase())
+  );
+  const nativeDlssItems = (scan.dlssFiles || []).filter((f) => {
+    const rel = path.normalize(path.relative(gameDir, f.path)).toLowerCase();
+    return !addedRelSet.has(rel) && /^(nvngx_dlss|_?nvngx)\.dll$/i.test(f.name);
+  });
+  const replacedDlssItems = (manifest && Array.isArray(manifest.replaced) ? manifest.replaced : [])
+    .filter((r) => /^(nvngx_dlss|_?nvngx)\.dll$/i.test(path.basename(String(r.rel || ''))));
+  const hasDlss1x = nativeDlssItems.length > 0 && nativeDlssItems.every((f) => f.version && /^1\./.test(String(f.version).trim()));
+  const safeHookInfo = apply.selectSafeReShadeHook
+    ? apply.selectSafeReShadeHook(exeDir, scan.chosen?.api || 'dxgi', scan.chosen?.apiLabel || '', 'dxgi')
+    : { hook: 'dxgi.dll', avoidedConflict: null };
+
+  let dlssCompatMode = 'native_ready';
+  let dlssCompatSummary = '已识别原生 DLSS 运行时，支持直接热替换升级至 DLSS 5 (310.9.1 / 310.9.16)。';
+  if (replacedDlssItems.length > 0) {
+    const sample = replacedDlssItems[0];
+    dlssCompatMode = 'upgraded_from_low';
+    dlssCompatSummary = `已将游戏原厂低版本 DLSS (${sample.oldVersion || '2.x/3.x'} → ${sample.newVersion || '310.9.1.0'}，共 ${replacedDlssItems.length} 处含深层插件目录) 原位备份并升级至 DLSS 5。`;
+  } else if (hasDlss1x) {
+    dlssCompatMode = 'dlss1x_feeder';
+    dlssCompatSummary = `检测到远古 DLSS 1.x (${nativeDlssItems[0].version})，因 NGX v1 ABI 不兼容已自动绕过原文件并启用 Feeder 1.19.0 + 光流神经渲染管线。`;
+  } else if (nativeDlssItems.length === 0) {
+    const upscalerCount = (scan.upscalerFiles || []).length;
+    dlssCompatMode = 'no_dlss_feeder';
+    dlssCompatSummary = upscalerCount > 0
+      ? `游戏无内置 DLSS（检测到 ${upscalerCount} 个 FSR/XeSS 组件），已支持 Feeder 1.19.0 + 光流无损注入或 OptiScaler 桥接。`
+      : '游戏无内置 DLSS，已自动匹配离线 Feeder 1.19.0 + LumeniteFX 2.0 光流 + DLSS 5 神经渲染管线。';
+  } else if (nativeDlssItems.some((f) => f.version && /^[23]\./.test(String(f.version).trim()))) {
+    const lowVer = nativeDlssItems.find((f) => f.version && /^[23]\./.test(String(f.version).trim()));
+    dlssCompatMode = 'low_dlss_ready';
+    dlssCompatSummary = `检测到游戏内置低版本 DLSS (${lowVer.version}，位于 ${lowVer.rel})，点击应用即可自动原位升级至 DLSS 5 并保留原文件备份。`;
+  }
+  if (safeHookInfo.avoidedConflict) {
+    dlssCompatSummary += ` 检测到 ${safeHookInfo.avoidedConflict} 被学习补丁/Mod 占用，已自动改用 ${safeHookInfo.hook} 注入以保护补丁。`;
+  }
+
   return {
     bothActive,
     dllConflicts,
@@ -316,7 +362,13 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     hudFlickerCheck,
     vramBudget,
     reflexCheck,
-    backupCheck
+    backupCheck,
+    dlssCompat: {
+      mode: dlssCompatMode,
+      summary: dlssCompatSummary,
+      hook: safeHookInfo.hook,
+      avoidedConflict: safeHookInfo.avoidedConflict
+    }
   };
 }
 
@@ -446,7 +498,13 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     Array.isArray(prevManifest.replaced) &&
     prevManifest.replaced.some((r) => /nvngx_dlss|_nvngx|sl\.dlss/i.test(String(r.rel || '')))
   );
-  const hasNativeDlss = nativeDlssFiles.length > 0 || nativeSlFiles.length > 0 || hasReplacedDlss;
+  // 排除远古 DLSS 1.x (v1.x.x.x)：早期破解版游戏 (如 Control / 地铁离去 v1.0) 自带的 1.x NGX ABI 与 DLSS 2/3/5 不兼容，
+  // 必须将其视为无原生 2.x+ DLSS，自动走 Feeder + 光流 + DLSS 5 管线。
+  const baseNativeDlssFiles = nativeDlssFiles.filter((f) => /^(nvngx_dlss|_?nvngx)\.dll$/i.test(f.name));
+  const isLegacyDlss1x = baseNativeDlssFiles.length > 0 &&
+    baseNativeDlssFiles.every((f) => f.version && /^1\./.test(String(f.version).trim()));
+  const usableNativeDlssFiles = nativeDlssFiles.filter((f) => !(f.version && /^1\./.test(String(f.version).trim())));
+  const hasNativeDlss = usableNativeDlssFiles.length > 0 || nativeSlFiles.length > 0 || (hasReplacedDlss && !isLegacyDlss1x);
 
   const renderingApi = require('../shared/rendering-api');
   const { scanSource } = require('./scan');
@@ -490,10 +548,16 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
         probe.feeder.lumeniteRoot = null;
         onLog({ code: 'motionProviderFallback', params: { error: err.message } });
       }
-      const enhAddon64 = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0', 'dlss5-feed.addon64');
+      const enhDir = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0');
+      const enhAddon32 = path.join(enhDir, 'dlss5-feed.addon32');
+      if (fs.existsSync(enhAddon32)) probe.feeder.addon32 = enhAddon32;
+      const enhAddon64 = path.join(enhDir, 'dlss5-feed.addon64');
       if (fs.existsSync(enhAddon64)) probe.feeder.addon64 = enhAddon64;
-      const enhFeedFx = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0', 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx');
+      const enhHost64 = path.join(enhDir, 'host64', 'dlss5-feed-host64.exe');
+      if (fs.existsSync(enhHost64)) probe.feeder.host64 = enhHost64;
+      const enhFeedFx = path.join(enhDir, 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx');
       if (fs.existsSync(enhFeedFx)) probe.feeder.feedShader = enhFeedFx;
+      if (fs.existsSync(enhAddon32) || fs.existsSync(enhAddon64)) probe.feeder.version = '1.19.0';
 
       const setupName = fs.existsSync(effectivePayloadDir)
         ? fs.readdirSync(effectivePayloadDir).find((f) => /^ReShade_Setup_.*_Addon\.exe$/i.test(f))
@@ -501,6 +565,9 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
       const reshadeSetup = setupName ? path.join(effectivePayloadDir, setupName) : null;
 
       await journal.transaction(gameDir, async () => {
+        const safeHook = apply.selectSafeReShadeHook
+          ? apply.selectSafeReShadeHook(exeDir, targetApi, targetApiLabel, config.reshadeProxy || 'dxgi')
+          : { proxy: config.reshadeProxy || 'dxgi' };
         const mf = await apply.applySwap({
           gameDir,
           exePath: target.path,
@@ -512,9 +579,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
           source: probe,
           reshadeSetup,
           vulkanLayerTarget: path.join(effectiveUserDataDir, 'reshade-vulkan'),
-          reshadeProxy: ['dxgi', 'd3d8', 'd3d9', 'd3d10', 'ddraw'].includes(targetApi) && targetApiLabel !== 'DirectX 12'
-            ? (config.reshadeProxy || 'dxgi')
-            : 'dxgi',
+          reshadeProxy: safeHook.proxy || 'dxgi',
           installReShade: true,
           addMissingDlss: true,
           addStreamline: false,
@@ -632,11 +697,15 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
         } else if (!reshadeCheck || !reshadeCheck.installed || !reshadeCheck.addonSupport) {
           const bundledReshade = path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll');
           if (fs.existsSync(bundledReshade)) {
-            const hookFile = path.join(exeDir, 'dxgi.dll');
+            const safeHook = apply.selectSafeReShadeHook
+              ? apply.selectSafeReShadeHook(exeDir, scan.chosen.api, scan.chosen.apiLabel, config.reshadeProxy || 'dxgi')
+              : { hook: 'dxgi.dll' };
+            const hookName = safeHook.hook || 'dxgi.dll';
+            const hookFile = path.join(exeDir, hookName);
             const hookExisted = fs.existsSync(hookFile);
             await apply.copyTracked(manifest, gameDir, bundledReshade, hookFile, { kind: 'reshade' });
             manifest.reshade.installedByUs = !hookExisted;
-            manifest.reshade.file = 'dxgi.dll';
+            manifest.reshade.file = hookName;
           }
         }
 

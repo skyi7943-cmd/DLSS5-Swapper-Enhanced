@@ -882,6 +882,15 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
 
     // 如果选择关闭神经渲染 ('off')，将已注入的 nvngx_dlssnr.dll 与消费者插件一并移除或从备份恢复，避免孤立插件提示“未安装 NR 运行时”
     if (mode === 'off') {
+      const deepTargets = [];
+      for (const item of scan.dlssFiles || []) {
+        if (/^nvngx_dlssnr\.dll$/i.test(item.name)) {
+          deepTargets.push(item.path);
+        } else if (/^(nvngx_dlss|_?nvngx)\.dll$/i.test(item.name)) {
+          deepTargets.push(item.path);
+          deepTargets.push(path.join(path.dirname(item.path), 'nvngx_dlssnr.dll'));
+        }
+      }
       const filesToDisable = [
         destNr,
         path.join(exeDir, 'nvngx_dlssnr.dll'),
@@ -890,7 +899,8 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
         path.join(exeDir, 'dlss5-feed.addon64'),
         path.join(exeDir, 'dlss5-feed.addon32'),
         path.join(targetDir, 'renodx-dlss5.addon64'),
-        path.join(targetDir, 'renodx-dlss.addon64')
+        path.join(targetDir, 'renodx-dlss.addon64'),
+        ...deepTargets
       ];
       const visited = new Set();
       for (const fileTarget of filesToDisable) {
@@ -906,7 +916,8 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
             await fs.promises.copyFile(backupFile, fileTarget);
             onLog({ code: 'neuralModelRestoredOriginal', params: { rel } });
           }
-        } else {
+        } else if (!/^(nvngx_dlss|_?nvngx)\.dll$/i.test(path.basename(fileTarget)) ||
+                   (manifest.added || []).some((a) => a.toLowerCase() === rel.toLowerCase())) {
           await journal.capture(gameDir, fileTarget);
           await fs.promises.unlink(fileTarget);
           onLog({ code: 'neuralModelDisabled', params: { rel } });
@@ -1060,11 +1071,36 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
         : path.join(effectivePayloadDir, 'streamline');
       const srcDlss = path.join(stackDir, 'nvngx_dlss.dll');
       if (fs.existsSync(srcDlss)) {
+        const newDlssVer = pe.getFileVersion(srcDlss);
         const destDlss = path.join(targetDir, 'nvngx_dlss.dll');
         await apply.copyTracked(manifest, gameDir, srcDlss, destDlss, {
           kind: 'runtime',
-          newVersion: pe.getFileVersion(srcDlss)
+          newVersion: newDlssVer
         });
+        // 针对破解版 / 离线免安装版 UE4/UE5 与 Unity 游戏中藏在深层插件子目录的低版本 nvngx_dlss.dll (2.x/3.x)，
+        // 自动执行深层原位备份升级，并同步放置 nvngx_dlssnr.dll（排除 ABI 不兼容的远古 DLSS 1.x）
+        const seenDirs = new Set([path.resolve(targetDir).toLowerCase()]);
+        for (const item of scan.dlssFiles || []) {
+          if (!/^(nvngx_dlss|_?nvngx)\.dll$/i.test(item.name)) continue;
+          if (item.bitness && item.bitness !== 64) continue;
+          if (item.version && /^1\./.test(String(item.version).trim())) continue;
+          const normItem = path.resolve(item.path).toLowerCase();
+          if (normItem !== path.resolve(destDlss).toLowerCase() && fs.existsSync(item.path)) {
+            await apply.copyTracked(manifest, gameDir, srcDlss, item.path, {
+              kind: 'runtime',
+              newVersion: newDlssVer
+            });
+          }
+          const itemDir = path.dirname(item.path);
+          const normDir = path.resolve(itemDir).toLowerCase();
+          if (!seenDirs.has(normDir) && fs.existsSync(itemDir)) {
+            seenDirs.add(normDir);
+            await apply.copyTracked(manifest, gameDir, chosenModel.filePath, path.join(itemDir, 'nvngx_dlssnr.dll'), {
+              kind: 'runtime',
+              newVersion: binaryCheck.version
+            });
+          }
+        }
       }
       if (effectiveStack === 'oct2026-310.9.16' && manifest.route === 'feeder') {
         const feederEnhDir = path.join(effectivePayloadDir, 'enhanced', 'feeder-1.19.0');

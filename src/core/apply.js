@@ -288,10 +288,67 @@ function isAddonReShade(file) {
 
 function hookForApi(api, proxy) {
   if (api === 'opengl') return 'opengl32.dll';
-  // #328: a DirectX 11 game that never loads dxgi.dll still loads d3d11.dll.
-  if (api === 'dxgi' && proxy === 'd3d11') return 'd3d11.dll';
-  if (api === 'd3d9') return 'd3d9.dll';
+  if (api === 'dxgi') {
+    const cleanProxy = String(proxy || '').replace(/\.dll$/i, '').toLowerCase();
+    // #328: a DirectX 11 game that never loads dxgi.dll still loads d3d11.dll.
+    // Crack patches and mod loaders that occupy dxgi.dll can fall back to
+    // d3d12.dll, d3d11.dll, or dinput8.dll without overwriting the crack DLL.
+    if (cleanProxy === 'd3d11') return 'd3d11.dll';
+    if (cleanProxy === 'd3d12') return 'd3d12.dll';
+    if (cleanProxy === 'dinput8') return 'dinput8.dll';
+  }
+  if (api === 'd3d9') {
+    const cleanProxy = String(proxy || '').replace(/\.dll$/i, '').toLowerCase();
+    if (cleanProxy === 'dinput8') return 'dinput8.dll';
+    return 'd3d9.dll';
+  }
   return 'dxgi.dll';
+}
+
+function isForeignProxyDll(filePath) {
+  if (!fs.existsSync(filePath)) return false;
+  if (isAddonReShade(filePath) || pe.versionMentions(filePath, 'ReShade')) return false;
+  return true;
+}
+
+function selectSafeReShadeHook(exeDir, api = 'dxgi', apiLabel = '', requestedProxy = 'dxgi') {
+  const preferred = hookForApi(api, requestedProxy);
+  const preferredIsForeign = isForeignProxyDll(path.join(exeDir, preferred));
+  const existingReShade = inspectReShade(exeDir);
+  if (existingReShade.installed && existingReShade.kind === 'proxy' && existingReShade.file) {
+    return {
+      hook: existingReShade.file,
+      proxy: existingReShade.file.replace(/\.dll$/i, '').toLowerCase(),
+      avoidedConflict: preferredIsForeign && existingReShade.file.toLowerCase() !== preferred.toLowerCase() ? preferred : null
+    };
+  }
+  if (!preferredIsForeign) {
+    return {
+      hook: preferred,
+      proxy: preferred.replace(/\.dll$/i, '').toLowerCase(),
+      avoidedConflict: null
+    };
+  }
+  const fallbacks = api === 'dxgi'
+    ? (String(apiLabel || '').includes('12')
+        ? ['d3d12.dll', 'dinput8.dll', 'd3d11.dll']
+        : ['d3d11.dll', 'dinput8.dll', 'd3d12.dll'])
+    : ['dinput8.dll'];
+  for (const candidate of fallbacks) {
+    if (candidate.toLowerCase() === preferred.toLowerCase()) continue;
+    if (!isForeignProxyDll(path.join(exeDir, candidate))) {
+      return {
+        hook: candidate,
+        proxy: candidate.replace(/\.dll$/i, '').toLowerCase(),
+        avoidedConflict: preferred
+      };
+    }
+  }
+  return {
+    hook: preferred,
+    proxy: preferred.replace(/\.dll$/i, '').toLowerCase(),
+    avoidedConflict: null
+  };
 }
 
 // Microsoft Store/GDK executables may remain encrypted even in an otherwise
@@ -513,6 +570,17 @@ async function applyFeeder(config, log) {
     manifest, gameDir, source.feeder.shaderRoot,
     path.join(exeDir, 'reshade-shaders'), log
   );
+  if (
+    source.feeder.feedShader &&
+    fs.existsSync(source.feeder.feedShader) &&
+    path.resolve(source.feeder.feedShader) !== path.resolve(path.join(source.feeder.shaderRoot, 'Shaders', 'DLSS5_Feed.fx'))
+  ) {
+    await copyTracked(
+      manifest, gameDir, source.feeder.feedShader,
+      path.join(exeDir, 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx'),
+      { kind: 'shader' }
+    );
+  }
   const provider = source.feeder.lumeniteRoot ? 3 : 2;
   if (source.feeder.lumeniteRoot) {
     await copyTreeTracked(
@@ -640,36 +708,42 @@ async function applyFeeder(config, log) {
 // Keeps ReShade from starting with our add-on switched off, and clears stale
 // multi-pass NRPasses>1 left behind by an earlier renodx-dlss.addon64 run.
 async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
-  // 自动同步部署游戏内 Home 菜单全量简体中文化插件 dlss5-zh-cn.addon64
+  // 自动同步部署游戏内 Home 菜单全量简体中文化与 32 位神经渲染面板插件 (dlss5-zh-cn.addon64 / dlss5-zh-cn.addon32)
   const tmpRoot = path.resolve(require('os').tmpdir()).toLowerCase();
   const normExeDir = path.resolve(exeDir).toLowerCase();
   const isRealGameDir = !normExeDir.startsWith(tmpRoot);
   try {
     if (isRealGameDir) {
+      const zhFileName = /\.addon32$/i.test(addonName) ? 'dlss5-zh-cn.addon32' : 'dlss5-zh-cn.addon64';
       const tempZhDirs = [];
       try {
         const tmp = require('os').tmpdir();
         for (const name of fs.readdirSync(tmp)) {
           if (/^DLSS5-Swapper/i.test(name)) {
-            tempZhDirs.push(path.join(tmp, name, 'resources', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64'));
+            tempZhDirs.push(path.join(tmp, name, 'resources', 'payload', 'enhanced', 'zh-cn', zhFileName));
           } else if (/^ns[a-z0-9]+\.tmp$/i.test(name)) {
-            tempZhDirs.push(path.join(tmp, name, 'app', 'resources', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64'));
-            tempZhDirs.push(path.join(tmp, name, '7z-out', 'resources', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64'));
+            tempZhDirs.push(path.join(tmp, name, 'app', 'resources', 'payload', 'enhanced', 'zh-cn', zhFileName));
+            tempZhDirs.push(path.join(tmp, name, '7z-out', 'resources', 'payload', 'enhanced', 'zh-cn', zhFileName));
           }
         }
       } catch {}
       const zhCandidates = [
-        process.resourcesPath ? path.join(process.resourcesPath, 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
-        path.resolve(__dirname, '..', '..', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64'),
-        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
-        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
-        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload', 'enhanced', 'zh-cn', 'dlss5-zh-cn.addon64') : null,
+        process.resourcesPath ? path.join(process.resourcesPath, 'payload', 'enhanced', 'zh-cn', zhFileName) : null,
+        path.resolve(__dirname, '..', '..', 'payload', 'enhanced', 'zh-cn', zhFileName),
+        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload', 'enhanced', 'zh-cn', zhFileName) : null,
+        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload', 'enhanced', 'zh-cn', zhFileName) : null,
+        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '..', 'payload', 'enhanced', 'zh-cn', zhFileName) : null,
         ...tempZhDirs,
-        'E:\\DLSS5-Swapper-Enhanced\\payload\\enhanced\\zh-cn\\dlss5-zh-cn.addon64'
+        path.join('E:\\DLSS5-Swapper-Enhanced\\payload\\enhanced\\zh-cn', zhFileName)
       ].filter(Boolean);
       const zhSrc = zhCandidates.find((p) => fs.existsSync(p));
-      if (zhSrc && fs.existsSync(exeDir) && !/\.addon32$/i.test(addonName)) {
-        await copyOver(zhSrc, path.join(exeDir, 'dlss5-zh-cn.addon64'));
+      if (zhSrc && fs.existsSync(exeDir)) {
+        const zhDest = path.join(exeDir, zhFileName);
+        await copyOver(zhSrc, zhDest);
+        if (manifest && Array.isArray(manifest.added) && gameDir) {
+          const rel = relPath(gameDir, zhDest);
+          if (!manifest.added.includes(rel)) manifest.added.push(rel);
+        }
       }
     }
   } catch {}
@@ -1192,4 +1266,4 @@ async function makeReShadeConfigWritable(exeDir) {
   return cleared;
 }
 
-module.exports = { hookForApi, makeReShadeConfigWritable, applySwap, restore, restoreFiles, recoverableManifest, retireOldShaderCompiler, setAsideRivalConsumers, canWrite, backupRoot, compareVersions, beginManifest, originalPath, copyTracked, writeTracked, saveActiveManifest, enableAddonInIni, trackBeforeWrite };
+module.exports = { hookForApi, selectSafeReShadeHook, makeReShadeConfigWritable, applySwap, restore, restoreFiles, recoverableManifest, retireOldShaderCompiler, setAsideRivalConsumers, canWrite, backupRoot, compareVersions, beginManifest, originalPath, copyTracked, writeTracked, saveActiveManifest, enableAddonInIni, trackBeforeWrite };

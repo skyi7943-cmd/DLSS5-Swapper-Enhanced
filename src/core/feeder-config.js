@@ -108,6 +108,17 @@ function configureConsumer(text, { host = false, xenia = false } = {}) {
   for (const [key, value] of Object.entries({ EnableHooks: '2', NeuralUplift: '1', NREnableUpscaling: '0' })) {
     out = setIni(out, 'RenoDX.DLSS5', key, value);
   }
+  for (const [key, value] of Object.entries({
+    ConfigVersion: '7',
+    NRIntensity: '1',
+    NRPasses: '1',
+    NRPreset: '0',
+    NRStyle: '0'
+  })) {
+    if (getIni(out, 'RenoDX.DLSS5', key) === null) {
+      out = setIni(out, 'RenoDX.DLSS5', key, value);
+    }
+  }
   if (host) out = setIni(out, 'RenoDX.DLSS5', 'NRToggleKey', '0');
   if (getIni(out, 'RenoDX.DLSS5', 'NRStyle') === '2') out = setIni(out, 'RenoDX.DLSS5', 'NRStyle', '0');
   if (xenia) {

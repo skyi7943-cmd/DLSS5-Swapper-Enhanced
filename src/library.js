@@ -123,6 +123,20 @@ function steam(options = {}) {
           protonPrefix: platform === 'linux' ? path.join(base, 'steamapps', 'compatdata', appid, 'pfx') : null
         });
       }
+      if (!options.roots && platform === 'win32') {
+        const seenDirs = new Set(games.map((g) => path.resolve(g.dir).toLowerCase()));
+        const commonDir = path.join(appsDir, 'common');
+        try {
+          for (const entry of fs.readdirSync(commonDir, { withFileTypes: true })) {
+            if (!entry.isDirectory() || NOT_A_GAME.test(entry.name) || NOT_A_GAME_DIR.test(entry.name)) continue;
+            const dir = path.join(commonDir, entry.name);
+            const norm = path.resolve(dir).toLowerCase();
+            if (seenDirs.has(norm) || !holdsGame(dir, 2)) continue;
+            seenDirs.add(norm);
+            games.push({ launcher: 'Steam', id: null, name: entry.name, dir, poster: null, steamRoot: base, protonPrefix: null });
+          }
+        } catch {}
+      }
     }
   }
   return games;
@@ -199,7 +213,7 @@ const SYSTEM_DIRS = new Set([
 // Folder names people give a games library. Matched first so a library that
 // happens to hold one game is still recognised.
 const LIBRARY_NAME = /^(games?|my ?games|steamlibrary|gog ?games|epic ?games|xbox ?games|origin ?games|repacks?|emulation)$/i;
-const NOT_A_GAME_EXE = /^(unins|setup|install|vcredist|dxsetup|dotnet|oalinst|crashpad|launcher_installer)/i;
+const NOT_A_GAME_EXE = /^(unins|setup|install|vcredist|dxsetup|dotnet|oalinst|crashpad|launcher_installer|dgvoodoocpl|dlss5-feed-host)/i;
 
 // Fixed disks only. A disconnected network drive would block on every read.
 //
@@ -239,7 +253,7 @@ function isUnrealGameRoot(dir) {
   try { return fs.statSync(path.join(dir, 'Engine', 'Binaries')).isDirectory(); } catch { return false; }
 }
 
-const NOT_A_GAME_DIR = /^(steamapps|gamesave|gamesaves|workshop|downloading|shadercache|temp|tmp|backup|_dlss5_backup|reshade-shaders|saves?|savegames?|redist|_?commonredist|installers?|setup|dlc|mods?|tools?)$/i;
+const NOT_A_GAME_DIR = /^(steamapps|gamesave|gamesaves|workshop|downloading|shadercache|temp|tmp|backup|_dlss5_backup|reshade-shaders|host64|saves?|savegames?|redist|_?commonredist|installers?|setup|dlc|mods?|tools?)$/i;
 
 // A game folder holds a runnable file somewhere near its top. Three levels
 // covers a repack that buries it - Golf.Gambit.v1.0.5-EA-OFME\Golf Gambit\ -
@@ -249,7 +263,7 @@ function holdsGame(dir, depth = 3) {
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
   if (entries.some((e) => e.isFile() && /\.exe$/i.test(e.name) && !NOT_A_GAME_EXE.test(e.name))) return true;
   if (depth <= 0) return false;
-  return entries.some((e) => e.isDirectory() && holdsGame(path.join(dir, e.name), depth - 1));
+  return entries.some((e) => e.isDirectory() && !NOT_A_GAME_DIR.test(e.name) && holdsGame(path.join(dir, e.name), depth - 1));
 }
 
 function autoRoots() {

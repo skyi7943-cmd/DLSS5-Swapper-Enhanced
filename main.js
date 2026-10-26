@@ -226,6 +226,18 @@ function payload(raw) {
         const over = list.find((f) => fs.existsSync(f) && path.basename(f).toLowerCase() === base);
         if (over) probe.addon = over;
       }
+      if (probe.feeder) {
+        const enhDir = path.join(dir, 'enhanced', 'feeder-1.19.0');
+        const enhAddon32 = path.join(enhDir, 'dlss5-feed.addon32');
+        const enhAddon64 = path.join(enhDir, 'dlss5-feed.addon64');
+        const enhHost64 = path.join(enhDir, 'host64', 'dlss5-feed-host64.exe');
+        const enhFeedFx = path.join(enhDir, 'reshade-shaders', 'Shaders', 'DLSS5_Feed.fx');
+        if (fs.existsSync(enhAddon32)) probe.feeder.addon32 = enhAddon32;
+        if (fs.existsSync(enhAddon64)) probe.feeder.addon64 = enhAddon64;
+        if (fs.existsSync(enhHost64)) probe.feeder.host64 = enhHost64;
+        if (fs.existsSync(enhFeedFx)) probe.feeder.feedShader = enhFeedFx;
+        if (fs.existsSync(enhAddon32) || fs.existsSync(enhAddon64)) probe.feeder.version = '1.19.0';
+      }
       return { source: probe, reshadeSetup: setup ? path.join(dir, setup) : null };
     }
   }
@@ -239,7 +251,7 @@ const posterDir = () => path.join(app.getPath('userData'), 'posters');
 const keyFor = (dir) => crypto.createHash('sha1').update(path.resolve(dir).toLowerCase()).digest('hex').slice(0, 16);
 // Bump when scan metadata or detection changes so an old wrong result is not
 // kept forever merely because the folder was scanned by an earlier release.
-const SCAN_RULES = 7;
+const SCAN_RULES = 8;
 
 // One live object, not a fresh snapshot per call. Every handler used to parse
 // the file, hold that copy across an await, and write the whole thing back:
@@ -1092,7 +1104,19 @@ ipcMain.handle('scan', async (_event, dir) => {
   const key = keyFor(dir);
   try {
     const scan = await scanGame(dir);
-    const dlss = scan.primaryDlss;
+    let dlss = scan.primaryDlss;
+    if (!dlss && scan.chosen && scan.chosen.bitness === 32) {
+      const hostDlss = path.join(path.dirname(scan.chosen.path), 'host64', 'nvngx_dlss.dll');
+      if (fs.existsSync(hostDlss)) {
+        dlss = {
+          path: hostDlss,
+          rel: path.relative(dir, hostDlss),
+          name: 'nvngx_dlss.dll',
+          version: pe.getFileVersion(hostDlss),
+          bitness: 64
+        };
+      }
+    }
     const result = {
       dir,
       ok: Boolean(scan.chosen),
@@ -1638,7 +1662,27 @@ ipcMain.handle('details', async (_event, dir) => {
   }
   const state = loadState();
   const hasNativeDlss = installRoutes.nativeDlssPresent(scan);
-  const files = [...scan.dlssFiles, ...scan.streamlineFiles]
+  const hasNativeUpscaler = installRoutes.nativeUpscalerPresent ? installRoutes.nativeUpscalerPresent(scan) : false;
+  const hostDlssFiles = [];
+  let effectivePrimaryDlss = scan.primaryDlss;
+  if (scan.chosen && scan.chosen.bitness === 32) {
+    const hostDir = path.join(path.dirname(scan.chosen.path), 'host64');
+    for (const name of ['nvngx_dlss.dll', 'nvngx_dlssnr.dll']) {
+      const full = path.join(hostDir, name);
+      if (fs.existsSync(full)) {
+        const item = {
+          path: full,
+          rel: path.relative(dir, full),
+          name,
+          version: pe.getFileVersion(full),
+          bitness: 64
+        };
+        hostDlssFiles.push(item);
+        if (!effectivePrimaryDlss && name === 'nvngx_dlss.dll') effectivePrimaryDlss = item;
+      }
+    }
+  }
+  const files = [...scan.dlssFiles, ...hostDlssFiles, ...scan.streamlineFiles]
     .map((f) => ({ rel: f.rel, name: f.name, version: f.version }));
   return {
     ok: Boolean(scan.chosen),
@@ -1664,16 +1708,17 @@ ipcMain.handle('details', async (_event, dir) => {
       installIssue: compatibility.targetIssue(dir, e.path),
       antiCheatWarning: compatibility.hasAntiCheat(dir, e.path),
       hasNativeDlss,
+      hasNativeUpscaler,
       apiOverride: apiPreference(state, dir, e.path),
       reshadeProxy: reshadeProxyPreference(state, dir, e.path),
       apiChoices: e.apiChoices || [{ api: e.api, label: e.apiLabel }],
-      routes: installRoutes.routesFor({ ...e, hasNativeDlss })
+      routes: installRoutes.routesFor({ ...e, hasNativeDlss, hasNativeUpscaler })
     })),
     files,
-    currentDlss: scan.primaryDlss ? {
-      rel: scan.primaryDlss.rel,
-      version: scan.primaryDlss.version,
-      bitness: scan.primaryDlss.bitness
+    currentDlss: effectivePrimaryDlss ? {
+      rel: effectivePrimaryDlss.rel,
+      version: effectivePrimaryDlss.version,
+      bitness: effectivePrimaryDlss.bitness
     } : null,
     addon: scan.addonPresent,
     reshade: scan.reshade,
@@ -1736,6 +1781,7 @@ ipcMain.handle('install', (event, dir, exePath, requestedRoute, requestedApi) =>
   const target = renderingApi.effective(detected, selection);
   compatibility.assertSafeTarget(dir, target.path);
   target.hasNativeDlss = installRoutes.nativeDlssPresent(scan);
+  target.hasNativeUpscaler = installRoutes.nativeUpscalerPresent ? installRoutes.nativeUpscalerPresent(scan) : false;
   const api = target.api;
   const availableRoutes = installRoutes.routesFor(target, api);
   if (requestedRoute === 'optiscaler' && !availableRoutes.includes('optiscaler')) {

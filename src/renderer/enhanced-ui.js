@@ -413,6 +413,7 @@
               <div class="enh-kv-row"><span class="k">图形 API (Graphics API)</span><span class="v">${escHtml(diag.graphicsApi || 'DirectX 12')} (${status.bitness || 64}-bit)</span></div>
               <div class="enh-kv-row"><span class="k">神经渲染状态 (Neural Rendering Status)</span><span class="v">${escHtml(diag.neuralStatus || '尚未测试')}</span></div>
               <div class="enh-kv-row"><span class="k">MFG 状态 (MFG Status)</span><span class="v">${escHtml(diag.mfgStatus || '尚未测试')}</span></div>
+              <div class="enh-kv-row"><span class="k">无 DLSS / 低版本 / 破解兼容 (DLSS & Crack Compat)</span><span class="v">${escHtml(coExec.dlssCompat?.summary || '已启用无 DLSS 光流注入、深层旧版 DLSS 自动升级与补丁防覆盖保护')}</span></div>
               <div class="enh-kv-row"><span class="k">DLL 冲突 (DLL Conflicts)</span><span class="v">${diag.dllConflicts?.length ? escHtml(diag.dllConflicts.map((c) => c.message).join('；')) : '无冲突 (0 项冲突)'}</span></div>
               <div class="enh-kv-row"><span class="k">错误日志 (Error Logs)</span><span class="v">${diag.errorLogs?.length ? escHtml(diag.errorLogs.join(' | ')) : '无错误记录 (0 项异常)'}</span></div>
               <div class="enh-kv-row"><span class="k">备份状态 (Backup Status)</span><span class="v">${escHtml(diag.backupStatus || '原版纯净状态')}</span></div>

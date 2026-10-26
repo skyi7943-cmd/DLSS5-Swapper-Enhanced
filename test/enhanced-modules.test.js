@@ -384,5 +384,97 @@ test('老游戏全自动离线管线：32位 DX9 与 64位 DX10 无原生 DLSS �
   assert.equal(fs.existsSync(path.join(gameDx10Dir, 'nvngx_dlssnr.dll')), false);
 });
 
+test('破解版与老版本 DLSS 专项兼容：深层 2.x/3.x 自动升级、DLSS 1.x 自动切换 Feeder、破解补丁 dxgi.dll 防覆盖保护与一键还原', async (t) => {
+  const { writePe } = require('./fixtures/pe');
+  const { scanGame } = require('../src/core/scan');
+  const installRoutes = require('../src/shared/install-routes');
+  const pe = require('../src/core/pe');
+
+  const crackedUeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-cracked-ue-'));
+  const crackedDlss1Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-cracked-dlss1-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-cracked-userdata-'));
+  t.after(() => {
+    fs.rmSync(crackedUeDir, { recursive: true, force: true });
+    fs.rmSync(crackedDlss1Dir, { recursive: true, force: true });
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  });
+
+  // 场景 1：UE4/UE5 破解版游戏（含 steamclient_loader.exe、Game_org.exe 备份、破解补丁 dxgi.dll 以及深层插件目录 2.3.0.0 旧版 DLSS）
+  const binDir = path.join(crackedUeDir, 'Game', 'Binaries', 'Win64');
+  const deepDlssDir = path.join(crackedUeDir, 'Engine', 'Plugins', 'Runtime', 'Nvidia', 'DLSS', 'Binaries', 'ThirdParty', 'Win64');
+  writePe(path.join(crackedUeDir, 'steamclient_loader.exe'), { bitness: 64, text: 'D3D12CreateDevice' });
+  writePe(path.join(binDir, 'CrackedGame_org.exe'), { bitness: 64, text: 'D3D12CreateDevice', extraSize: 4096 });
+  writePe(path.join(binDir, 'CrackedGame.exe'), { bitness: 64, text: 'D3D12CreateDevice', extraSize: 4096 });
+
+  // 模拟联机/学习补丁占用的 dxgi.dll（非 ReShade）
+  const crackDxgiPath = path.join(binDir, 'dxgi.dll');
+  writePe(crackDxgiPath, { bitness: 64, version: [1, 0, 0, 1], productName: 'OnlineFix Crack Proxy' });
+  const crackDxgiBytes = fs.readFileSync(crackDxgiPath);
+
+  // 模拟深层插件目录中的旧版 DLSS 2.3.0.0
+  const deepDlssPath = path.join(deepDlssDir, 'nvngx_dlss.dll');
+  writePe(deepDlssPath, { bitness: 64, version: [2, 3, 0, 0], productName: 'NVIDIA DLSS' });
+  const oldDlssBytes = fs.readFileSync(deepDlssPath);
+
+  const scan1 = await scanGame(crackedUeDir);
+  assert.equal(scan1.chosen.name, 'CrackedGame.exe', '应自动过滤 steamclient_loader.exe 并降权 CrackedGame_org.exe，准确选中主程序');
+  assert.equal(scan1.primaryDlss.version, '2.3.0.0');
+
+  const res1 = await combinedManager.applyCombinedConfiguration(crackedUeDir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'off',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(res1.ok, true);
+  // 验证破解补丁 dxgi.dll 完好无损，且 ReShade 自动改用 d3d12.dll 注入
+  assert.deepEqual(fs.readFileSync(crackDxgiPath), crackDxgiBytes, '严禁覆盖破解补丁自带的 dxgi.dll');
+  assert.equal(fs.existsSync(path.join(binDir, 'd3d12.dll')), true, 'ReShade 应自动回退使用 d3d12.dll');
+  assert.equal(pe.versionMentions(path.join(binDir, 'd3d12.dll'), 'ReShade'), true);
+  // 验证深层目录的旧版 2.3.0.0 nvngx_dlss.dll 已自动原位升级至 310.9.1.0，且同步部署了 nvngx_dlssnr.dll
+  assert.equal(pe.getFileVersion(deepDlssPath), '310.9.1.0', '深层插件目录中的旧版 DLSS 2.3.0.0 应自动升级至 310.9.1.0');
+  assert.equal(fs.existsSync(path.join(deepDlssDir, 'nvngx_dlssnr.dll')), true, '深层插件目录应同步额外部署 nvngx_dlssnr.dll');
+  assert.equal(res1.status.diagnostics.coExecution.dlssCompat.mode, 'upgraded_from_low');
+  assert.equal(res1.status.diagnostics.coExecution.dlssCompat.avoidedConflict, 'dxgi.dll');
+
+  // 验证一键卸载后深层旧版 2.3.0.0 DLSS 与破解补丁目录 100% 恢复原状
+  assert.equal(await backends.restore(crackedUeDir), true);
+  assert.deepEqual(fs.readFileSync(deepDlssPath), oldDlssBytes, '还原后深层 nvngx_dlss.dll 必须恢复为 2.3.0.0 原文件');
+  assert.equal(fs.existsSync(path.join(deepDlssDir, 'nvngx_dlssnr.dll')), false);
+  assert.equal(fs.existsSync(path.join(binDir, 'd3d12.dll')), false);
+  assert.deepEqual(fs.readFileSync(crackDxgiPath), crackDxgiBytes);
+
+  // 场景 2：早期 RTX 破解版游戏（自带远古 DLSS 1.x 如 1.2.10.0 + XeSS 组件）
+  writePe(path.join(crackedDlss1Dir, 'EarlyRtxGame.exe'), { bitness: 64, text: 'D3D12CreateDevice' });
+  const dlss1Path = path.join(crackedDlss1Dir, 'nvngx_dlss.dll');
+  writePe(dlss1Path, { bitness: 64, version: [1, 2, 10, 0], productName: 'NVIDIA DLSS v1' });
+  writePe(path.join(crackedDlss1Dir, 'libxess.dll'), { bitness: 64, version: [1, 3, 0, 0], productName: 'Intel XeSS' });
+
+  const scan2 = await scanGame(crackedDlss1Dir);
+  assert.equal(installRoutes.nativeDlssPresent(scan2), false, 'DLSS 1.x 因 ABI 不兼容应被视为非原生 2.x+ DLSS');
+  assert.equal(installRoutes.nativeUpscalerPresent(scan2), true, '应检测到原生 XeSS/FSR2 组件');
+  const routes2 = installRoutes.routesFor({
+    ...scan2.chosen,
+    hasNativeDlss: installRoutes.nativeDlssPresent(scan2),
+    hasNativeUpscaler: installRoutes.nativeUpscalerPresent(scan2)
+  });
+  assert.equal(routes2.includes('optiscaler'), true, '拥有 XeSS/FSR2 的无 DLSS 2+ 破解游戏应解锁 OptiScaler 路由');
+
+  const res2 = await combinedManager.applyCombinedConfiguration(crackedDlss1Dir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'off',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(res2.ok, true);
+  assert.equal(res2.feederDeployed, true, 'DLSS 1.x 游戏应自动走 Feeder + 光流管线');
+  assert.equal(fs.existsSync(path.join(crackedDlss1Dir, 'dlss5-feed.addon64')), true);
+});
+
+
 
 

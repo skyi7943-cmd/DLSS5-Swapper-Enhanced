@@ -28,12 +28,17 @@ const SKIP_DIRS = new Set([
 ]);
 const MAX_SCAN_DEPTH = 12;
 
-// Installers, launchers and anti-cheat helpers are never the game itself.
-const NOT_A_GAME = /^(unins|setup|install|vcredist|vc_redist|dxsetup|dxwebsetup|oalinst|uninstall|crashreport|crashhandler|easyanticheat|eac|battleye|be_service|launcher|activation|patch|update|dotnetfx|touchup|rapidcrc|autorun|autoplay|quicksfv|readme|config|benchmark|report|helper|service|cleanup|modorganizer|redlauncher|skse\d*_loader|hlds\b|srcds\b|steamerrorreporter|dgvoodoocpl|reshade_setup)/i;
+// Installers, launchers, crack loader stubs and anti-cheat helpers are never the game itself.
+const NOT_A_GAME = /^(unins|setup|install|vcredist|vc_redist|dxsetup|dxwebsetup|oalinst|uninstall|crashreport|crashhandler|easyanticheat|eac|battleye|be_service|launcher|activation|patch|update|dotnetfx|touchup|rapidcrc|autorun|autoplay|quicksfv|readme|config|benchmark|report|helper|service|cleanup|modorganizer|redlauncher|skse\d*_loader|hlds\b|srcds\b|steamerrorreporter|dgvoodoocpl|reshade_setup|steamclient_loader|smartsteamloader|epic_emu_launcher|language_?changer|language_?selector)/i;
 
 const DLSS_FILE = /^(nvngx_dlss[a-z_]*\.dll|nvngx\.dll|_nvngx\.dll)$/i;
 const STREAMLINE_FILE = /^sl\.[a-z_]+\.dll$/i;
+const UPSCALER_FILE = /^(libxess(?:_dx11|_fg)?\.dll|amd_fidelityfx_[a-z0-9_]+\.dll|ffx_fsr[23][a-z0-9_]*\.dll)$/i;
 const RESHADE_HOOKS = ['dxgi.dll', 'd3d12.dll', 'd3d11.dll', 'd3d9.dll', 'opengl32.dll', 'dinput8.dll'];
+
+function isDlss1xVersion(version) {
+  return /^1\./.test(String(version || '').trim());
+}
 
 async function walk(root, onFile, maxDepth = 8, options = {}) {
   const queue = [{ dir: root, depth: 0 }];
@@ -467,6 +472,11 @@ function playableRoleScore(exe) {
   if (/sp(?:[_-][^\\/]*)?\.exe$/.test(rel)) score += 2;
   if (/(?:^|[\\/])(?:multiplayer|online)(?:[\\/]|$)/.test(rel)) score -= 4;
   if (/mp(?:[_-][^\\/]*)?\.exe$/.test(rel)) score -= 2;
+  // Crack patches frequently rename the original DRM-protected executable to
+  // <Game>_org.exe / <Game>_orig.exe / <Game>_bak.exe while placing the active
+  // cracked executable at <Game>.exe. Penalize backup suffixes so the active
+  // executable always wins.
+  if (/[_-](?:org|orig|original|backup|bak|unpacked)\.exe$/.test(rel)) score -= 6;
   return score;
 }
 
@@ -477,6 +487,7 @@ async function scanGame(gameDir) {
   const undetectedExes = [];
   const dlssFiles = [];
   const streamlineFiles = [];
+  const upscalerFiles = [];
   let addonPresent = null;
   const xboxDeclared = xboxExecutables(gameDir);
   const xboxLayout = xboxDeclared.length > 0 || /(?:^|[\\/])xboxgames(?:[\\/]|$)/i.test(path.resolve(gameDir));
@@ -536,6 +547,18 @@ async function scanGame(gameDir) {
         depth
       };
       (STREAMLINE_FILE.test(name) ? streamlineFiles : dlssFiles).push(item);
+    } else if (UPSCALER_FILE.test(name)) {
+      const rel = path.relative(gameDir, full);
+      if (!/(?:^|[\\/])optiscaler(?:[\\/]|$)/i.test(rel)) {
+        upscalerFiles.push({
+          path: full,
+          rel,
+          name,
+          version: pe.getFileVersion(full),
+          bitness: pe.getBitness(full),
+          depth
+        });
+      }
     } else if (lower.endsWith('.addon64') || lower.endsWith('.addon32') || lower.endsWith('.addon')) {
       addonPresent = path.relative(gameDir, full);
     }
@@ -714,6 +737,7 @@ async function scanGame(gameDir) {
     dlssFiles,
     primaryDlss,
     streamlineFiles,
+    upscalerFiles,
     addonPresent,
     emptyReason,
     reshade,
@@ -820,6 +844,6 @@ function scanSource(sourceDir) {
 
 module.exports = {
   scanGame, scanSource, walk, selectPrimaryDlss, xboxExecutables, playableRoleScore, inspectReShade,
-  isVulkanWrapper, vulkanWrapperBeside,
+  isVulkanWrapper, vulkanWrapperBeside, isDlss1xVersion,
   gameApiProfile, rdr2Renderer, rdr2SettingsFiles
 };

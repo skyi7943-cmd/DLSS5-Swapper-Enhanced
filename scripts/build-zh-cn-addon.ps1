@@ -12,32 +12,39 @@ New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 $env:ZIG_GLOBAL_CACHE_DIR = Join-Path $appRoot 'tools/zig-cache'
 $env:ZIG_LOCAL_CACHE_DIR = Join-Path $appRoot 'tools/zig-local-cache'
 
-$outFile = Join-Path $outputDir 'dlss5-zh-cn.addon64'
-$args = @(
-    'c++',
-    '-target', 'x86_64-windows-gnu',
-    '-std=c++17',
-    '-O2',
-    '-shared',
-    '-static',
-    '-fms-extensions',
-    '-DWIN32_LEAN_AND_MEAN',
-    '-DNOMINMAX',
-    '-I', $sdk,
-    (Join-Path $appRoot 'overlay/zh-cn-overlay.cpp'),
-    '-o', $outFile
+$targets = @(
+    @{ Arch = 'x86_64-windows-gnu'; OutName = 'dlss5-zh-cn.addon64' },
+    @{ Arch = 'x86-windows-gnu';    OutName = 'dlss5-zh-cn.addon32' }
 )
-& $zig @args
-if ($LASTEXITCODE -ne 0) {
-    throw 'dlss5-zh-cn.addon64 compilation failed.'
-}
 
-$stream = [IO.File]::OpenRead($outFile)
-$hasher = [Security.Cryptography.SHA256]::Create()
-try {
-    $hash = [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
-} finally {
-    $stream.Dispose()
-    $hasher.Dispose()
+foreach ($t in $targets) {
+    $outFile = Join-Path $outputDir $t.OutName
+    $args = @(
+        'c++',
+        '-target', $t.Arch,
+        '-std=c++17',
+        '-O2',
+        '-shared',
+        '-static',
+        '-fms-extensions',
+        '-DWIN32_LEAN_AND_MEAN',
+        '-DNOMINMAX',
+        '-I', $sdk,
+        (Join-Path $appRoot 'overlay/zh-cn-overlay.cpp'),
+        '-o', $outFile
+    )
+    & $zig @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "$($t.OutName) compilation failed."
+    }
+
+    $stream = [IO.File]::OpenRead($outFile)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        $hasher.Dispose()
+    }
+    Write-Output "Built $outFile (SHA-256 $hash)"
 }
-Write-Output "Built $outFile (SHA-256 $hash)"
