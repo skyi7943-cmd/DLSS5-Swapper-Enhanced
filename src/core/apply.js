@@ -591,12 +591,33 @@ async function applyFeeder(config, log) {
       { kind: 'shader' }
     );
   }
-  const provider = source.feeder.lumeniteRoot ? 3 : 2;
+  const provider = (bitness === 32 || !source.feeder.lumeniteRoot) ? 2 : 3;
   if (source.feeder.lumeniteRoot) {
-    await copyTreeTracked(
-      manifest, gameDir, path.join(source.feeder.lumeniteRoot, 'Shaders'),
-      path.join(exeDir, 'reshade-shaders', 'Shaders'), log
-    );
+    // 仅复制 DLSS5_Feed 实际用到的 lumenite_Kernel.fx 与 include 头文件目录，
+    // 剔除 7 个未使用的重型光追/AO/反射着色器（避免每次切换分辨率或启动时并发编译 10 个大着色器导致卡死）
+    for (const unusedFx of [
+      'lumenite_AnamorphicBloom.fx', 'lumenite_LSAO.fx', 'lumenite_QuantAO.fx',
+      'lumenite_QuantMotion.fx', 'lumenite_RTAO.fx', 'lumenite_SSSR.fx', 'lumenite_TRAA.fx'
+    ]) {
+      const staleFx = path.join(exeDir, 'reshade-shaders', 'Shaders', unusedFx);
+      if (fs.existsSync(staleFx)) {
+        try { fs.unlinkSync(staleFx); } catch {}
+      }
+    }
+    const kernelSrc = path.join(source.feeder.lumeniteRoot, 'Shaders', 'lumenite_Kernel.fx');
+    if (fs.existsSync(kernelSrc)) {
+      await copyTracked(
+        manifest, gameDir, kernelSrc,
+        path.join(exeDir, 'reshade-shaders', 'Shaders', 'lumenite_Kernel.fx'), { kind: 'shader' }
+      );
+    }
+    const includeSrc = path.join(source.feeder.lumeniteRoot, 'Shaders', 'include');
+    if (fs.existsSync(includeSrc)) {
+      await copyTreeTracked(
+        manifest, gameDir, includeSrc,
+        path.join(exeDir, 'reshade-shaders', 'Shaders', 'include'), log
+      );
+    }
     await copyTreeTracked(
       manifest, gameDir, path.join(source.feeder.lumeniteRoot, 'Textures'),
       path.join(exeDir, 'reshade-shaders', 'Textures'), log

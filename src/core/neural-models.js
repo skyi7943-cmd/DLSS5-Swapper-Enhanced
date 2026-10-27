@@ -996,13 +996,15 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
     const feederConfig = require('./feeder-config');
     const reshadeIniPath = path.join(targetDir, 'ReShade.ini');
     const isDesktopProfile = hardwareProfile === 'rtx40_desktop' || hardwareProfile === 'rtx50_desktop';
-    const hasNativeStreamline = targetDir === exeDir && (
+    const isHost64 = targetDir !== exeDir;
+    const isFeederRoute = isHost64 || manifest.route === 'feeder';
+    const hasNativeStreamline = !isFeederRoute && (
       fs.existsSync(path.join(exeDir, 'sl.interposer.dll')) ||
       fs.existsSync(path.join(exeDir, 'sl.common.dll')) ||
       (Array.isArray(scan.streamlineFiles) && scan.streamlineFiles.length > 0)
     );
     let iniText = feederConfig.readText(reshadeIniPath);
-    if (!hasNativeStreamline) {
+    if (!hasNativeStreamline && !isFeederRoute) {
       iniText = iniText.replace(/^EnableHooks=.*\r?\n?/gim, '');
     }
     const nrSettings = [
@@ -1010,7 +1012,9 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
       ['ADDON', 'AddonPath', '.\\'],
       ['RenoDX DLSS', 'NRPasses', '1'],
       ['RenoDX.DLSS5', 'ConfigVersion', '7'],
-      ...(hasNativeStreamline ? [['RenoDX.DLSS5', 'EnableHooks', '1']] : []),
+      ...(isFeederRoute
+        ? [['RenoDX.DLSS5', 'EnableHooks', '2'], ['RenoDX.DLSS5', 'NREnableUpscaling', '0']]
+        : (hasNativeStreamline ? [['RenoDX.DLSS5', 'EnableHooks', '1']] : [])),
       ['RenoDX.DLSS5', 'NeuralUplift', '1'],
       ['RenoDX.DLSS5', 'NRAutoMask', '0'],
       ['RenoDX.DLSS5', 'NRChainedHistory', '1'],
@@ -1050,7 +1054,7 @@ async function applyNeuralModelSelection(gameDir, options = {}, onLog = () => {}
       ['RenoDX.DLSS5', 'NRSourceEncoding', '0'],
       ['RenoDX.DLSS5', 'NRSourcePrimaries', '0'],
       ['RenoDX.DLSS5', 'NRStyle', '0'],
-      ['RenoDX.DLSS5', 'NRToggleKey', '117'],
+      ['RenoDX.DLSS5', 'NRToggleKey', isHost64 ? '0' : '117'],
       ['RenoDX.DLSS5', 'NRTransferMode', '0'],
       ['RenoDX.DLSS5', 'NRTransferStrength', '1'],
       ['RenoDX.DLSS5', 'NRUICorrection', '0'],

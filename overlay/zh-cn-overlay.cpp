@@ -737,6 +737,26 @@ bool on_overlay_technique(reshade::api::effect_runtime *, reshade::api::effect_t
     return false;
 }
 
+void on_init_device(reshade::api::device *device) {
+    if (!device || device->get_api() != reshade::api::device_api::d3d11) return;
+    void *unk = reinterpret_cast<void *>(static_cast<uintptr_t>(device->get_native()));
+    if (!unk) return;
+    // 在 D3D11 设备创建瞬间立即开启 ID3D10Multithread 多线程保护，防止 ReShade 后台编译线程与 dgVoodoo2 / 游戏流式加载线程死锁
+    static const GUID kIID_ID3D10Multithread = {
+        0x9b7e4e00, 0x342c, 0x4106, {0xa1, 0x9f, 0x4f, 0x27, 0x04, 0xf6, 0x89, 0xf0}
+    };
+    auto **unk_vtable = *reinterpret_cast<void ***>(unk);
+    using qi_fn = HRESULT(__stdcall *)(void *, const GUID &, void **);
+    void *mt = nullptr;
+    if (reinterpret_cast<qi_fn>(unk_vtable[0])(unk, kIID_ID3D10Multithread, &mt) >= 0 && mt) {
+        auto **mt_vtable = *reinterpret_cast<void ***>(mt);
+        using set_mt_fn = BOOL(__stdcall *)(void *, BOOL);
+        using release_fn = ULONG(__stdcall *)(void *);
+        reinterpret_cast<set_mt_fn>(mt_vtable[5])(mt, TRUE);
+        reinterpret_cast<release_fn>(mt_vtable[2])(mt);
+    }
+}
+
 #endif // _WIN64
 
 void install_imgui_hooks() {
@@ -864,9 +884,43 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
     patch_reshade_in_memory();
     reshade::register_event<reshade::addon_event::reshade_overlay>(on_reshade_overlay);
 #ifndef _WIN64
+    // 1. 预加载 dinput8.dll / hid.dll / setupapi.dll / winmm.dll，使 ReShade 在主线程同步完成延迟钩子安装，
+    //    彻底消除多线程游戏（如《虐杀原形》prototypef.exe）工作线程并发加载 dinput8 与 HID.DLL 触发的钩子死锁警告与卡顿。
+    LoadLibraryW(L"dinput8.dll");
+    LoadLibraryW(L"hid.dll");
+    LoadLibraryW(L"setupapi.dll");
+    LoadLibraryW(L"winmm.dll");
+
+    // 2. 针对《虐杀原形 (Prototype)》等在超过 8 逻辑核心 CPU 上存在引擎线程池死锁/掉帧缺陷的 32 位老游戏，
+    //    自动将 32 位游戏进程绑定至前 8 个逻辑核心 (0xFF)。
+    wchar_t exe_path[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exe_path, MAX_PATH)) {
+        _wcslwr_s(exe_path, MAX_PATH);
+        if (wcsstr(exe_path, L"prototype") || wcsstr(exe_path, L"scarface")) {
+            DWORD_PTR proc_mask = 0, sys_mask = 0;
+            if (GetProcessAffinityMask(GetCurrentProcess(), &proc_mask, &sys_mask)) {
+                const DWORD_PTR capped = sys_mask & 0xFF;
+                if (capped != 0) SetProcessAffinityMask(GetCurrentProcess(), capped);
+            }
+        }
+    }
+
+    reshade::register_event<reshade::addon_event::init_device>(on_init_device);
     reshade::register_event<reshade::addon_event::reshade_open_overlay>(on_open_overlay);
     reshade::register_event<reshade::addon_event::reshade_overlay_technique>(on_overlay_technique);
     reshade::register_overlay(kDlss5TabTitle, on_draw_32bit_dlss5_tab);
+#else
+    // 若当前 64 位宿主进程 (dlss5-feed-host64.exe) 继承了 32 位父进程的受限 CPU 亲和性掩码，自动恢复全核心亲和性以保证神经渲染满速运行
+    wchar_t host_path[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, host_path, MAX_PATH)) {
+        _wcslwr_s(host_path, MAX_PATH);
+        if (wcsstr(host_path, L"dlss5-feed-host64")) {
+            DWORD_PTR proc_mask = 0, sys_mask = 0;
+            if (GetProcessAffinityMask(GetCurrentProcess(), &proc_mask, &sys_mask) && sys_mask != 0 && proc_mask != sys_mask) {
+                SetProcessAffinityMask(GetCurrentProcess(), sys_mask);
+            }
+        }
+    }
 #endif
     reshade::log::message(reshade::log::level::info, "DLSS 5 Swapper Enhanced: Simplified Chinese UI localization layer active.");
     return true;
@@ -877,6 +931,7 @@ extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon, HMODULE reshade
     reshade::unregister_overlay(kDlss5TabTitle, on_draw_32bit_dlss5_tab);
     reshade::unregister_event<reshade::addon_event::reshade_overlay_technique>(on_overlay_technique);
     reshade::unregister_event<reshade::addon_event::reshade_open_overlay>(on_open_overlay);
+    reshade::unregister_event<reshade::addon_event::init_device>(on_init_device);
 #endif
     reshade::unregister_event<reshade::addon_event::reshade_overlay>(on_reshade_overlay);
     unpatch_reshade_in_memory();

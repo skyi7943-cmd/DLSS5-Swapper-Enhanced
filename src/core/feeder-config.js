@@ -89,6 +89,7 @@ function configureGameReShade(text, provider = 2) {
   out = setIni(out, 'GENERAL', 'PresetPath', getIni(out, 'GENERAL', 'PresetPath') || '.\\ReShadePreset.ini');
   out = setIni(out, 'GENERAL', 'StartupPresetPath', '');
   out = setIni(out, 'GENERAL', 'NoReloadOnInit', '0');
+  out = setIni(out, 'GENERAL', 'SkipLoadingDisabledEffects', '1');
   const definitions = mergeNamedList(
     getIni(out, 'GENERAL', 'PreprocessorDefinitions'),
     [`DLSS5_MV_PROVIDER=${provider}`],
