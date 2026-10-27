@@ -309,6 +309,7 @@ function detectApi(file, imports) {
   const dir = path.dirname(file);
   for (const name of imports.slice(0, 80)) {
     if (path.basename(name) !== name || /[\\/:]/.test(name)) continue;
+    if (NOT_A_RENDERER.test(name) || NOT_OFFERED.test(name)) continue;
     const sibling = findCaseInsensitive(dir, name);
     // System DLLs live in System32; only the game's own modules sit here.
     if (!sibling || pe.getBitness(sibling) !== pe.getBitness(file)) continue;
@@ -367,19 +368,36 @@ function detectEngineApi(file) {
 }
 
 // Libraries that mention Direct3D without being a game's renderer: browser
-// engines, shader compilers, the graphics runtimes themselves, and the files
-// this app and the mods it sits beside put there. None of them is evidence
-// that a folder holds a game.
-const NOT_A_RENDERER = /^(?:libglesv2|libegl|libcef|chrome_elf|cef|d3dcompiler_\d+|dxcompiler|dxil|vulkan-1|opengl32|d3d\d+|d3d\d+core|dxgi|ddraw|d3dimm|nvngx.*|sl\..*|amd_.*|ffx_.*|reshade\d*|dlss5.*|dgvoodoo.*|qt\d.*|mono.*|steam_api.*|galaxy.*|eossdk.*|discord.*|gameoverlayrenderer.*|renodx.*)\.dll$/i;
+// engines, video/audio codecs (Bink/Miles/FMOD/OpenAL), physics engines, shader
+// compilers, the graphics runtimes themselves, and the files this app and the
+// mods it sits beside put there. None of them is evidence that a folder holds a game.
+const NOT_A_RENDERER = /^(?:libglesv2|libegl|libcef|chrome_elf|cef|sciter.*|coherent.*|ultralight.*|awesomium.*|webview2loader|bink.*|smackw32|mss32|mss64|fmod.*|openal32|wrap_oal|xaudio2_.*|dsound|ak.*|cri_ware.*|avcodec.*|avformat.*|avutil.*|swscale.*|libvlc.*|physx.*|nxcharacter.*|apex_.*|cudart.*|havok.*|embree.*|tbb.*|xinput.*|dinput.*|sdl2_.*|dbghelp|symsrv|bugsplat.*|crash.*|xlive|gfwlivesdk|paul|uplay_.*|ubiorbitapi.*|d3dcompiler_\d+|dxcompiler|dxil|vulkan-1|opengl32|d3d\d+|d3d\d+core|dxgi|ddraw|d3dimm|nvngx.*|sl\..*|amd_.*|ffx_.*|reshade\d*|dlss5.*|dgvoodoo.*|qt\d.*|mono.*|steam_api.*|galaxy.*|eossdk.*|discord.*|gameoverlayrenderer.*|renodx.*)\.dll$/i;
 // Source 2 loads rendersystemdx11.dll itself, and installing into Dota 2 broke
 // it (#199). Its renderer is named so the reason is honest, but never offered.
 const NOT_OFFERED = /^rendersystem/i;
+
+function scoreRendererModuleCandidate(name, api, fromImports, size = 0, exeNames = []) {
+  let score = fromImports ? 2000 : 200;
+  if (api && api.api !== 'ddraw') score += 500;
+  if (/(?:engine|render|d3d|dx\d*|gfx|graphic|shader|video|client)/i.test(name)) score += 1000;
+  const lower = name.toLowerCase();
+  for (const exeName of exeNames) {
+    const stem = path.basename(exeName, '.exe').toLowerCase().replace(/[_-]?f$/, '');
+    if (stem.length >= 3 && lower.includes(stem)) {
+      score += 800;
+      break;
+    }
+  }
+  score += Math.min(400, Math.floor((size || 0) / (64 * 1024)));
+  return score;
+}
 
 // The graphics evidence a game keeps in one of its own libraries rather than
 // in the executable. Bounded hard: this runs only when a scan already found
 // nothing, and it must not turn that into a long walk.
 function rendererEvidence(gameDir, budget = 60) {
   const queue = [[gameDir, 0]];
+  let best = null;
   while (queue.length && budget > 0) {
     const [dir, depth] = queue.shift();
     let entries = [];
@@ -390,12 +408,18 @@ function rendererEvidence(gameDir, budget = 60) {
       if (entry.isDirectory()) { if (depth < 4) queue.push([full, depth + 1]); continue; }
       if (!/\.dll$/i.test(entry.name) || NOT_A_RENDERER.test(entry.name) || budget-- <= 0) continue;
       try {
-        const api = apiFromNames(pe.getImports(full)) || apiFromMarkers(full);
-        if (api) return { file: full, name: entry.name, api: api.api, label: api.label, bitness: pe.getBitness(full) };
+        const impApi = apiFromNames(pe.getImports(full));
+        const api = impApi || apiFromMarkers(full);
+        if (!api) continue;
+        let size = 0;
+        try { size = fs.statSync(full).size; } catch {}
+        const score = scoreRendererModuleCandidate(entry.name, api, Boolean(impApi), size);
+        const candidate = { file: full, name: entry.name, api: api.api, label: api.label, bitness: pe.getBitness(full), score };
+        if (!best || candidate.score > best.score) best = candidate;
       } catch { /* an unreadable module is not evidence */ }
     }
   }
-  return null;
+  return best;
 }
 
 function rendererModule(gameDir, budget = 60) {
@@ -412,22 +436,35 @@ function rendererBeside(exes, budget = 60) {
     const dir = path.dirname(exe.path);
     byDir.set(dir, [...(byDir.get(dir) || []), exe]);
   }
+  let bestMatch = null;
   for (const [dir, here] of byDir) {
     let names = [];
     try { names = fs.readdirSync(dir); } catch { continue; }
+    const exeNames = here.map((e) => e.name || path.basename(e.path));
     for (const name of names) {
       if (!/\.dll$/i.test(name) || NOT_A_RENDERER.test(name) || NOT_OFFERED.test(name) || budget-- <= 0) continue;
       const file = path.join(dir, name);
+      let impApi = null;
       let api = null;
-      try { api = apiFromNames(pe.getImports(file)) || apiFromMarkers(file); } catch { continue; }
+      try {
+        impApi = apiFromNames(pe.getImports(file));
+        api = impApi || apiFromMarkers(file);
+      } catch { continue; }
       if (!api) continue;
       const bitness = pe.getBitness(file);
       const exe = here.filter((item) => item.bitness === bitness)
         .sort((a, b) => (playableRoleScore(b) - playableRoleScore(a)) || (b.size - a.size))[0];
-      if (exe) return { exe, evidence: { file, name, api: api.api, label: api.label, bitness } };
+      if (exe) {
+        let size = 0;
+        try { size = fs.statSync(file).size; } catch {}
+        const score = scoreRendererModuleCandidate(name, api, Boolean(impApi), size, exeNames);
+        if (!bestMatch || score > bestMatch.score) {
+          bestMatch = { exe, evidence: { file, name, api: api.api, label: api.label, bitness }, score };
+        }
+      }
     }
   }
-  return null;
+  return bestMatch ? { exe: bestMatch.exe, evidence: bestMatch.evidence } : null;
 }
 
 function pathDistance(a, b) {

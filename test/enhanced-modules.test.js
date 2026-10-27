@@ -473,6 +473,20 @@ test('破解版与老版本 DLSS 专项兼容：深层 2.x/3.x 自动升级、DL
   assert.equal(res2.ok, true);
   assert.equal(res2.feederDeployed, true, 'DLSS 1.x 游戏应自动走 Feeder + 光流管线');
   assert.equal(fs.existsSync(path.join(crackedDlss1Dir, 'dlss5-feed.addon64')), true);
+
+  // 场景 3：《虐杀原形 (Prototype)》类引擎：主程序无直接 D3D 导入，同目录同时存在含 DirectDrawCreate 字符串的 binkw32.dll 与真实渲染模块 prototypeenginef.dll
+  const protoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-proto-'));
+  try {
+    writePe(path.join(protoDir, 'prototypef.exe'), { bitness: 32, size: 128 * 1024 });
+    writePe(path.join(protoDir, 'binkw32.dll'), { bitness: 32, text: 'DirectDrawCreate' });
+    writePe(path.join(protoDir, 'prototypeenginef.dll'), { bitness: 32, text: 'Direct3DCreate9', size: 256 * 1024 });
+    const scanProto = await scanGame(protoDir);
+    assert.equal(scanProto.chosen.name, 'prototypef.exe');
+    assert.equal(scanProto.chosen.api, 'd3d9', '应忽略 binkw32.dll 的 DirectDraw 字符串，准确识别 prototypeenginef.dll 的 DirectX 9');
+    assert.equal(scanProto.chosen.via, 'renderer-module:prototypeenginef.dll');
+  } finally {
+    fs.rmSync(protoDir, { recursive: true, force: true });
+  }
 });
 
 

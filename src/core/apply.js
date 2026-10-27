@@ -525,6 +525,16 @@ async function applyFeeder(config, log) {
     // A DirectDraw title reaches Direct3D 7 through D3DImm, and dgVoodoo ships
     // the pair together. Without it, a game that uses both gets half a wrapper.
     const immediate = api === 'ddraw' ? path.join(path.dirname(dgDll), 'D3DImm.dll') : null;
+    const activeDgDlls = new Set([dllName.toLowerCase(), ...(immediate ? ['d3dimm.dll'] : [])]);
+    for (const staleName of ['DDraw.dll', 'D3DImm.dll', 'D3D8.dll', 'D3D9.dll']) {
+      if (activeDgDlls.has(staleName.toLowerCase())) continue;
+      const stalePath = path.join(exeDir, staleName);
+      try {
+        if (fs.existsSync(stalePath) && pe.versionMentions(stalePath, 'dgVoodoo')) {
+          fs.unlinkSync(stalePath);
+        }
+      } catch {}
+    }
     for (const src of [dgDll, dgCpl, ...(immediate && fs.existsSync(immediate) ? [immediate] : [])]) {
       const rel = await copyTracked(manifest, gameDir, src, path.join(exeDir, path.basename(src)), { kind: 'dgvoodoo' });
       log('added', { rel, version: pe.getFileVersion(src) });
