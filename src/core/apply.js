@@ -545,9 +545,31 @@ async function applyFeeder(config, log) {
       : feederConfig.readText(dgConf);
     const configuredDg = feederConfig.configureDgVoodoo(baseConf);
     await writeTracked(manifest, gameDir, confPath, configuredDg, { kind: 'config' });
-    const e2driverDir = path.join(exeDir, 'e2driver');
-    if (fs.existsSync(e2driverDir) && fs.statSync(e2driverDir).isDirectory()) {
-      await writeTracked(manifest, gameDir, path.join(e2driverDir, 'dgVoodoo.conf'), configuredDg, { kind: 'config' });
+    for (const subDirName of ['e2driver', 'drivers', 'driver', 'renderers']) {
+      const subDir = path.join(exeDir, subDirName);
+      if (fs.existsSync(subDir) && fs.statSync(subDir).isDirectory()) {
+        await writeTracked(manifest, gameDir, path.join(subDir, 'dgVoodoo.conf'), configuredDg, { kind: 'config' });
+      }
+    }
+    if (bitness === 32) {
+      const tmpRoot = path.resolve(os.tmpdir()).toLowerCase();
+      const normExeDir = path.resolve(exeDir).toLowerCase();
+      const isRealGameDir = !normExeDir.startsWith(tmpRoot) || Boolean(config.forcePreloader);
+      if (isRealGameDir) {
+        const winmmCandidates = [
+          process.resourcesPath ? path.join(process.resourcesPath, 'payload', 'enhanced', 'zh-cn', 'winmm.dll') : null,
+          path.resolve(__dirname, '..', '..', 'payload', 'enhanced', 'zh-cn', 'winmm.dll'),
+          process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload', 'enhanced', 'zh-cn', 'winmm.dll') : null,
+          process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload', 'enhanced', 'zh-cn', 'winmm.dll') : null,
+          path.join('E:\\DLSS5-Swapper-Enhanced\\payload\\enhanced\\zh-cn\\winmm.dll')
+        ].filter(Boolean);
+        const winmmSrc = winmmCandidates.find((p) => fs.existsSync(p));
+        const winmmDest = path.join(exeDir, 'winmm.dll');
+        if (winmmSrc && (!fs.existsSync(winmmDest) || wasAdded(manifest, path.relative(gameDir, winmmDest)))) {
+          const rel = await copyTracked(manifest, gameDir, winmmSrc, winmmDest, { kind: 'dgvoodoo' });
+          log('added', { rel, version: pe.getFileVersion(winmmSrc) });
+        }
+      }
     }
     reshadeApi = 'dxgi';
   }
