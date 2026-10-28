@@ -891,12 +891,21 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
     LoadLibraryW(L"setupapi.dll");
     LoadLibraryW(L"winmm.dll");
 
-    // 2. 针对《虐杀原形 (Prototype)》等在超过 8 逻辑核心 CPU 上存在引擎线程池死锁/掉帧缺陷的 32 位老游戏，
+    // 2. 将当前已加载的 dgVoodoo2 包装层 (D3D8.dll / D3D9.dll / DDraw.dll) 锁定在进程内存中，
+    //    防止《马克思佩恩 2 (Max Payne 2)》等自带启动器设置对话框的老游戏在点击 Play 关闭设置框时调用 FreeLibrary(hD3D8) 卸载 dgVoodoo2。
+    for (const wchar_t *wrap_dll : {L"d3d8.dll", L"d3d9.dll", L"ddraw.dll", L"d3dimm.dll"}) {
+        if (GetModuleHandleW(wrap_dll)) {
+            HMODULE pinned_wrap = nullptr;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, wrap_dll, &pinned_wrap);
+        }
+    }
+
+    // 3. 针对《虐杀原形 (Prototype)》《马克思佩恩 1/2 (Max Payne)》等在超过 8 逻辑核心 CPU 上存在引擎线程池死锁/掉帧缺陷的 32 位老游戏，
     //    自动将 32 位游戏进程绑定至前 8 个逻辑核心 (0xFF)。
     wchar_t exe_path[MAX_PATH] = {};
     if (GetModuleFileNameW(nullptr, exe_path, MAX_PATH)) {
         _wcslwr_s(exe_path, MAX_PATH);
-        if (wcsstr(exe_path, L"prototype") || wcsstr(exe_path, L"scarface")) {
+        if (wcsstr(exe_path, L"prototype") || wcsstr(exe_path, L"scarface") || wcsstr(exe_path, L"maxpayne")) {
             DWORD_PTR proc_mask = 0, sys_mask = 0;
             if (GetProcessAffinityMask(GetCurrentProcess(), &proc_mask, &sys_mask)) {
                 const DWORD_PTR capped = sys_mask & 0xFF;

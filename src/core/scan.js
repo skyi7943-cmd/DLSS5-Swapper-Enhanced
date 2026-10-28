@@ -29,7 +29,7 @@ const SKIP_DIRS = new Set([
 const MAX_SCAN_DEPTH = 12;
 
 // Installers, launchers, crack loader stubs and anti-cheat helpers are never the game itself.
-const NOT_A_GAME = /^(unins|setup|install|vcredist|vc_redist|dxsetup|dxwebsetup|oalinst|uninstall|crashreport|crashhandler|easyanticheat|eac|battleye|be_service|launcher|activation|patch|update|dotnetfx|touchup|rapidcrc|autorun|autoplay|quicksfv|readme|config|benchmark|report|helper|service|cleanup|modorganizer|redlauncher|skse\d*_loader|hlds\b|srcds\b|steamerrorreporter|dgvoodoocpl|reshade_setup|steamclient_loader|smartsteamloader|epic_emu_launcher|language_?changer|language_?selector)/i;
+const NOT_A_GAME = /^(unins|setup|install|vcredist|vc_redist|dxsetup|dxwebsetup|oalinst|uninstall|crashreport|crashhandler|bugreport|testapp|easyanticheat|eac|battleye|be_service|launcher|activation|patch|update|dotnetfx|touchup|rapidcrc|autorun|autoplay|quicksfv|readme|config|benchmark|report|helper|service|cleanup|modorganizer|redlauncher|skse\d*_loader|hlds\b|srcds\b|steamerrorreporter|dgvoodoocpl|reshade_setup|steamclient_loader|smartsteamloader|epic_emu_launcher|language_?changer|language_?selector)/i;
 
 const DLSS_FILE = /^(nvngx_dlss[a-z_]*\.dll|nvngx\.dll|_nvngx\.dll)$/i;
 const STREAMLINE_FILE = /^sl\.[a-z_]+\.dll$/i;
@@ -303,6 +303,9 @@ function detectApi(file, imports) {
   const direct = apiFromNames(imports);
   if (direct) return { ...direct, via: 'imports' };
 
+  const engine = detectEngineApi(file);
+  if (engine) return engine;
+
   const dynamic = apiFromMarkers(file);
   if (dynamic) return { ...dynamic, via: 'strings' };
 
@@ -323,15 +326,17 @@ function detectApi(file, imports) {
 
   const named = apiFromFileName(file);
   if (named) return { ...named, via: 'filename' };
-  return detectEngineApi(file);
+  return null;
 }
 
-// Small Source/GoldSrc dispatchers and several Ubisoft/UE2 games load their
+// Small Source/GoldSrc dispatchers and several Ubisoft/UE2/Remedy MAX-FX games load their
 // renderer dynamically from a separate module, not the executable's imports.
 // Only inspect modules belonging to these entry points, with matching PE
 // architecture and actual API evidence. A random DLL beside a tool is not
 // evidence that the tool is a game; injected graphics proxies are never used.
 function detectEngineApi(file) {
+  const exeDir = path.dirname(file);
+  const bitness = pe.getBitness(file);
   const modules = {
     'hl.exe': ['hw.dll'],
     'hl2.exe': ['bin/shaderapidx9.dll', 'bin/engine.dll', 'bin/x64/shaderapidx9.dll', 'bin/x64/engine.dll'],
@@ -350,19 +355,40 @@ function detectEngineApi(file) {
     // evidence; Portal 2 is the one on #217.
     'portal2.exe': ['bin/shaderapidx9.dll', 'bin/x64/shaderapidx9.dll'],
     'csgo.exe': ['bin/shaderapidx9.dll'],
-    'garrysmod.exe': ['bin/shaderapidx9.dll', 'bin/win64/shaderapidx9.dll']
+    'garrysmod.exe': ['bin/shaderapidx9.dll', 'bin/win64/shaderapidx9.dll'],
+    'maxpayne.exe': ['e2driver/e2_d3d8_driver_mfc.dll'],
+    'maxpayne2.exe': ['e2driver/e2_d3d8_driver_mfc.dll']
   }[path.basename(file).toLowerCase()];
-  if (!modules) return null;
-  const bitness = pe.getBitness(file);
-  for (const rel of modules) {
-    let module = path.dirname(file);
-    for (const part of rel.split('/')) {
-      module = findCaseInsensitive(module, part);
-      if (!module) break;
+  if (modules) {
+    for (const rel of modules) {
+      let module = exeDir;
+      for (const part of rel.split('/')) {
+        module = findCaseInsensitive(module, part);
+        if (!module) break;
+      }
+      if (!module || pe.getBitness(module) !== bitness) continue;
+      const api = apiFromNames(pe.getImports(module)) || apiFromMarkers(module) || apiFromFileName(module);
+      if (api) return { ...api, via: 'engine-module:' + rel };
     }
-    if (!module || pe.getBitness(module) !== bitness) continue;
-    const api = apiFromNames(pe.getImports(module)) || apiFromMarkers(module);
-    if (api) return { ...api, via: 'engine-module:' + rel };
+  }
+  // Generic renderer driver subdirectory check (e.g. Remedy MAX-FX e2driver/e2_d3d8_driver_mfc.dll,
+  // custom launcher names, or driver plugin folders):
+  for (const subName of ['e2driver', 'drivers', 'driver', 'renderers']) {
+    const subDir = findCaseInsensitive(exeDir, subName);
+    if (!subDir) continue;
+    let entries = [];
+    try { entries = fs.readdirSync(subDir); } catch { continue; }
+    for (const entry of entries) {
+      if (!/\.dll$/i.test(entry) || NOT_A_RENDERER.test(entry) || NOT_OFFERED.test(entry)) continue;
+      const namedApi = apiFromFileName(entry);
+      if (!namedApi) continue;
+      const full = path.join(subDir, entry);
+      if (pe.getBitness(full) !== bitness) continue;
+      const verified = apiFromNames(pe.getImports(full)) || apiFromMarkers(full);
+      if (verified && verified.api === namedApi.api) {
+        return { ...verified, via: `engine-module:${subName}/${entry}` };
+      }
+    }
   }
   return null;
 }
@@ -371,7 +397,7 @@ function detectEngineApi(file) {
 // engines, video/audio codecs (Bink/Miles/FMOD/OpenAL), physics engines, shader
 // compilers, the graphics runtimes themselves, and the files this app and the
 // mods it sits beside put there. None of them is evidence that a folder holds a game.
-const NOT_A_RENDERER = /^(?:libglesv2|libegl|libcef|chrome_elf|cef|sciter.*|coherent.*|ultralight.*|awesomium.*|webview2loader|bink.*|smackw32|mss32|mss64|fmod.*|openal32|wrap_oal|xaudio2_.*|dsound|ak.*|cri_ware.*|avcodec.*|avformat.*|avutil.*|swscale.*|libvlc.*|physx.*|nxcharacter.*|apex_.*|cudart.*|havok.*|embree.*|tbb.*|xinput.*|dinput.*|sdl2_.*|dbghelp|symsrv|bugsplat.*|crash.*|xlive|gfwlivesdk|paul|uplay_.*|ubiorbitapi.*|d3dcompiler_\d+|dxcompiler|dxil|vulkan-1|opengl32|d3d\d+|d3d\d+core|dxgi|ddraw|d3dimm|nvngx.*|sl\..*|amd_.*|ffx_.*|reshade\d*|dlss5.*|dgvoodoo.*|qt\d.*|mono.*|steam_api.*|galaxy.*|eossdk.*|discord.*|gameoverlayrenderer.*|renodx.*)\.dll$/i;
+const NOT_A_RENDERER = /^(?:libglesv2|libegl|libcef|chrome_elf|cef|sciter.*|coherent.*|ultralight.*|awesomium.*|webview2loader|bink.*|smackw32|mss32|mss64|fmod.*|openal32|wrap_oal|xaudio2_.*|dsound|ak.*|cri_ware.*|avcodec.*|avformat.*|avutil.*|swscale.*|libvlc.*|physx.*|nxcharacter.*|apex_.*|cudart.*|havok.*|embree.*|tbb.*|xinput.*|dinput.*|sdl2_.*|dbghelp|symsrv|bugsplat.*|crash.*|sysinfo.*|xlive|gfwlivesdk|paul|uplay_.*|ubiorbitapi.*|d3dcompiler_\d+|dxcompiler|dxil|vulkan-1|opengl32|d3d\d+|d3d\d+core|dxgi|ddraw|d3dimm|nvngx.*|sl\..*|amd_.*|ffx_.*|reshade\d*|dlss5.*|dgvoodoo.*|qt\d.*|mono.*|steam_api.*|galaxy.*|eossdk.*|discord.*|gameoverlayrenderer.*|renodx.*)\.dll$/i;
 // Source 2 loads rendersystemdx11.dll itself, and installing into Dota 2 broke
 // it (#199). Its renderer is named so the reason is honest, but never offered.
 const NOT_OFFERED = /^rendersystem/i;

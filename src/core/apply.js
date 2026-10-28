@@ -543,7 +543,12 @@ async function applyFeeder(config, log) {
     const baseConf = fs.existsSync(confPath)
       ? feederConfig.readText(confPath)
       : feederConfig.readText(dgConf);
-    await writeTracked(manifest, gameDir, confPath, feederConfig.configureDgVoodoo(baseConf), { kind: 'config' });
+    const configuredDg = feederConfig.configureDgVoodoo(baseConf);
+    await writeTracked(manifest, gameDir, confPath, configuredDg, { kind: 'config' });
+    const e2driverDir = path.join(exeDir, 'e2driver');
+    if (fs.existsSync(e2driverDir) && fs.statSync(e2driverDir).isDirectory()) {
+      await writeTracked(manifest, gameDir, path.join(e2driverDir, 'dgVoodoo.conf'), configuredDg, { kind: 'config' });
+    }
     reshadeApi = 'dxgi';
   }
 

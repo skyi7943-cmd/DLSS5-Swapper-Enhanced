@@ -487,6 +487,20 @@ test('破解版与老版本 DLSS 专项兼容：深层 2.x/3.x 自动升级、DL
   } finally {
     fs.rmSync(protoDir, { recursive: true, force: true });
   }
+
+  // 场景 4：《马克思佩恩 2 (Max Payne 2)》类引擎：主程序内嵌 DxDiag 硬件检测字符串 Direct3DCreate9，真实渲染模块位于 e2driver/e2_d3d8_driver_mfc.dll
+  const mp2Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-mp2-'));
+  try {
+    writePe(path.join(mp2Dir, 'maxpayne2.exe'), { bitness: 32, text: 'Direct3DCreate9', extraSize: 64 * 1024 });
+    writePe(path.join(mp2Dir, 'BugReport.exe'), { bitness: 32, text: 'Direct3DCreate9' });
+    writePe(path.join(mp2Dir, 'e2driver', 'e2_d3d8_driver_mfc.dll'), { bitness: 32, text: 'Direct3DCreate8' });
+    const scanMp2 = await scanGame(mp2Dir);
+    assert.equal(scanMp2.chosen.name, 'maxpayne2.exe');
+    assert.equal(scanMp2.chosen.api, 'd3d8', '应识别 e2driver/e2_d3d8_driver_mfc.dll 的真实 DirectX 8 渲染器，而非主程序 DxDiag 的 Direct3DCreate9 字符串');
+    assert.equal(scanMp2.chosen.via, 'engine-module:e2driver/e2_d3d8_driver_mfc.dll');
+  } finally {
+    fs.rmSync(mp2Dir, { recursive: true, force: true });
+  }
 });
 
 
