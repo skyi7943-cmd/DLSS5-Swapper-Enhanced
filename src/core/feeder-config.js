@@ -192,19 +192,26 @@ function configureFeed(text) {
   return out.join('\r\n') + '\r\n';
 }
 
-function configureDgVoodoo(text) {
+function configureDgVoodoo(text, options = {}) {
   let out = String(text || '');
   out = setIni(out, 'General', 'OutputAPI', 'd3d11_fl11_0');
   out = setIni(out, 'General', 'CaptureMouse', 'false');
   out = setIni(out, 'DirectX', 'DisableAndPassThru', 'false');
   out = setIni(out, 'DirectX', 'VideoCard', 'internal3D');
-  // dgVoodoo ships 256 MB of emulated video memory and enforces it: a DirectX 9
-  // game at a modern resolution exhausts that in seconds, CreateTexture then
-  // fails in a loop and the game dies. Measured in SWTOR at 2560x1440 on #37,
-  // where 1024 still was not enough. The number is an emulated ceiling, not an
-  // allocation, so a generous one only stops false out-of-memory failures.
-  out = setIni(out, 'DirectX', 'VRAM', '4096');
+  // 32位老游戏 (DDraw/DX8/DX9) 调用 GetAvailableVidMem / GetAvailableTextureMem 时返回字节级 32 位整数；
+  // 若设为 4096 MB (4,294,967,296 字节 = 0x100000000) 会发生 32 位有符号/无符号整数溢出（在部分老引擎中算作负数或 0 MB 显存），
+  // 因此 32 位游戏统一设为安全的 1024 MB (1,073,741,824 < 2^31)，64 位游戏保持 4096 MB。
+  const is32Bit = Boolean(options && options.bitness === 32);
+  const vram = is32Bit ? '1024' : '4096';
+  out = setIni(out, 'DirectX', 'VRAM', vram);
   out = setIni(out, 'DirectX', 'dgVoodooWatermark', 'false');
+  if (is32Bit) {
+    // 启用无边框伪全屏 (FullscreenAttributes=fake)，避免独占全屏模式切换导致 DirectShow/VMR9 开场视频闪退
+    // （如《侠盗猎车手：罪恶都市》）并保证 Windows 11 DWM 下 host64 神经渲染叠加层稳定贴合窗口。
+    out = setIni(out, 'GeneralExt', 'FullscreenAttributes', 'fake');
+    // 补充经典低分辨率列表，防止现代笔记本 eDP 面板缺失 640x480 / 800x600 / 1024x768 模式导致老游戏首次启动直接退出。
+    out = setIni(out, 'DirectXExt', 'ExtraEnumeratedResolutions', '640x480, 800x600, 1024x768, 1280x720, 1280x960, 1600x900');
+  }
   return out;
 }
 

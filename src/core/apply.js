@@ -14,6 +14,7 @@ const feederConfig = require('./feeder-config');
 const vulkanLayer = require('./vulkan-layer');
 const journal = require('./file-journal');
 const compatibility = require('./compatibility');
+const legacyInstallScript = require('./legacy-installscript');
 const crypto = require('crypto');
 
 const BACKUP_DIR = '_DLSS5_Backup';
@@ -312,15 +313,22 @@ function isForeignProxyDll(filePath) {
 }
 
 function selectSafeReShadeHook(exeDir, api = 'dxgi', apiLabel = '', requestedProxy = 'dxgi') {
-  const preferred = hookForApi(api, requestedProxy);
+  // DDraw / D3D8 / D3D9 经 dgVoodoo2 转译为 D3D11 输出，D3D10 原生走 DXGI；
+  // ReShade 在这些管线下实际挂载的是 dxgi.dll（或 d3d11.dll），绝不能误检 dgVoodoo 自身的 d3d9.dll/d3d8.dll/ddraw.dll
+  const isWrappedLegacy = ['d3d8', 'd3d9', 'ddraw'].includes(api);
+  const effectiveApi = (isWrappedLegacy || api === 'd3d10') ? 'dxgi' : api;
+  const preferred = hookForApi(effectiveApi, requestedProxy);
   const preferredIsForeign = isForeignProxyDll(path.join(exeDir, preferred));
   const existingReShade = inspectReShade(exeDir);
   if (existingReShade.installed && existingReShade.kind === 'proxy' && existingReShade.file) {
-    return {
-      hook: existingReShade.file,
-      proxy: existingReShade.file.replace(/\.dll$/i, '').toLowerCase(),
-      avoidedConflict: preferredIsForeign && existingReShade.file.toLowerCase() !== preferred.toLowerCase() ? preferred : null
-    };
+    // 若目录内残留的是与当前 dgVoodoo 槽位同名的旧版 ReShade (如 d3d9.dll)，不能复用为 dgVoodoo 后端钩子
+    if (!(isWrappedLegacy && /^(d3d8|d3d9|ddraw)\.dll$/i.test(existingReShade.file))) {
+      return {
+        hook: existingReShade.file,
+        proxy: existingReShade.file.replace(/\.dll$/i, '').toLowerCase(),
+        avoidedConflict: preferredIsForeign && existingReShade.file.toLowerCase() !== preferred.toLowerCase() ? preferred : null
+      };
+    }
   }
   if (!preferredIsForeign) {
     return {
@@ -329,11 +337,13 @@ function selectSafeReShadeHook(exeDir, api = 'dxgi', apiLabel = '', requestedPro
       avoidedConflict: null
     };
   }
-  const fallbacks = api === 'dxgi'
-    ? (String(apiLabel || '').includes('12')
-        ? ['d3d12.dll', 'dinput8.dll', 'd3d11.dll']
-        : ['d3d11.dll', 'dinput8.dll', 'd3d12.dll'])
-    : ['dinput8.dll'];
+  const fallbacks = isWrappedLegacy
+    ? ['d3d11.dll']
+    : effectiveApi === 'dxgi'
+      ? (String(apiLabel || '').includes('12')
+          ? ['d3d12.dll', 'dinput8.dll', 'd3d11.dll']
+          : ['d3d11.dll', 'dinput8.dll', 'd3d12.dll'])
+      : ['dinput8.dll'];
   for (const candidate of fallbacks) {
     if (candidate.toLowerCase() === preferred.toLowerCase()) continue;
     if (!isForeignProxyDll(path.join(exeDir, candidate))) {
@@ -543,7 +553,7 @@ async function applyFeeder(config, log) {
     const baseConf = fs.existsSync(confPath)
       ? feederConfig.readText(confPath)
       : feederConfig.readText(dgConf);
-    const configuredDg = feederConfig.configureDgVoodoo(baseConf);
+    const configuredDg = feederConfig.configureDgVoodoo(baseConf, { bitness, api });
     await writeTracked(manifest, gameDir, confPath, configuredDg, { kind: 'config' });
     for (const subDirName of ['e2driver', 'drivers', 'driver', 'renderers']) {
       const subDir = path.join(exeDir, subDirName);
@@ -551,27 +561,33 @@ async function applyFeeder(config, log) {
         await writeTracked(manifest, gameDir, path.join(subDir, 'dgVoodoo.conf'), configuredDg, { kind: 'config' });
       }
     }
-    if (bitness === 32) {
-      const tmpRoot = path.resolve(os.tmpdir()).toLowerCase();
-      const normExeDir = path.resolve(exeDir).toLowerCase();
-      const isRealGameDir = !normExeDir.startsWith(tmpRoot) || Boolean(config.forcePreloader);
-      if (isRealGameDir) {
-        const winmmCandidates = [
-          process.resourcesPath ? path.join(process.resourcesPath, 'payload', 'enhanced', 'zh-cn', 'winmm.dll') : null,
-          path.resolve(__dirname, '..', '..', 'payload', 'enhanced', 'zh-cn', 'winmm.dll'),
-          process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload', 'enhanced', 'zh-cn', 'winmm.dll') : null,
-          process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload', 'enhanced', 'zh-cn', 'winmm.dll') : null,
-          path.join('E:\\DLSS5-Swapper-Enhanced\\payload\\enhanced\\zh-cn\\winmm.dll')
-        ].filter(Boolean);
-        const winmmSrc = winmmCandidates.find((p) => fs.existsSync(p));
-        const winmmDest = path.join(exeDir, 'winmm.dll');
-        if (winmmSrc && (!fs.existsSync(winmmDest) || wasAdded(manifest, path.relative(gameDir, winmmDest)))) {
-          const rel = await copyTracked(manifest, gameDir, winmmSrc, winmmDest, { kind: 'dgvoodoo' });
-          log('added', { rel, version: pe.getFileVersion(winmmSrc) });
-        }
+    reshadeApi = 'dxgi';
+  }
+
+  if (bitness === 32) {
+    const tmpRoot = path.resolve(os.tmpdir()).toLowerCase();
+    const normExeDir = path.resolve(exeDir).toLowerCase();
+    const isRealGameDir = !normExeDir.startsWith(tmpRoot) || Boolean(config.forcePreloader);
+    if (isRealGameDir) {
+      if (process.platform === 'win32') {
+        try {
+          legacyInstallScript.seedInstallScriptRegistry(gameDir, exeDir);
+        } catch {}
+      }
+      const winmmCandidates = [
+        process.resourcesPath ? path.join(process.resourcesPath, 'payload', 'enhanced', 'zh-cn', 'winmm.dll') : null,
+        path.resolve(__dirname, '..', '..', 'payload', 'enhanced', 'zh-cn', 'winmm.dll'),
+        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'payload', 'enhanced', 'zh-cn', 'winmm.dll') : null,
+        process.env.PORTABLE_EXECUTABLE_DIR ? path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'resources', 'payload', 'enhanced', 'zh-cn', 'winmm.dll') : null,
+        path.join('E:\\DLSS5-Swapper-Enhanced\\payload\\enhanced\\zh-cn\\winmm.dll')
+      ].filter(Boolean);
+      const winmmSrc = winmmCandidates.find((p) => fs.existsSync(p));
+      const winmmDest = path.join(exeDir, 'winmm.dll');
+      if (winmmSrc && (!fs.existsSync(winmmDest) || wasAdded(manifest, path.relative(gameDir, winmmDest)))) {
+        const rel = await copyTracked(manifest, gameDir, winmmSrc, winmmDest, { kind: 'dgvoodoo' });
+        log('added', { rel, version: pe.getFileVersion(winmmSrc) });
       }
     }
-    reshadeApi = 'dxgi';
   }
 
   if (api === 'vulkan') {
@@ -585,7 +601,7 @@ async function applyFeeder(config, log) {
     await saveActiveManifest(gameDir, manifest);
     log('vulkanLayerInstalled', { global: true, manifest: manifest.vulkanLayer.manifest });
   } else {
-    await installReShadeAt({
+    const installedHookPath = await installReShadeAt({
       gameDir, exePath, api: reshadeApi, manifest, reshadeSetup, setupRunner, log, gameInstance: true, bitness, source,
       // A wrapped DirectX 8/9 game becomes a DirectX 11 one inside dgVoodoo, and
       // which name that layer loads is not the same on every setup: some load
@@ -596,6 +612,17 @@ async function applyFeeder(config, log) {
       // for an install that already works.
       reshadeProxy
     });
+    // GoldSrc (hl.exe / Counter-Strike) 启动时会自动删除目录内的 opengl32.dll，
+    // 且 SDL2 常通过绝对路径加载 System32\opengl32.dll；额外部署受控备份 ReShade32.dll 供 winmm.dll 按需桥接挂载。
+    if (bitness === 32 && api === 'opengl') {
+      const tmpRoot = path.resolve(os.tmpdir()).toLowerCase();
+      const isRealGameDir = !path.resolve(exeDir).toLowerCase().startsWith(tmpRoot) || Boolean(config.forcePreloader);
+      if (isRealGameDir && installedHookPath && fs.existsSync(installedHookPath)) {
+        const rs32Dest = path.join(exeDir, 'ReShade32.dll');
+        const rel = await copyTracked(manifest, gameDir, installedHookPath, rs32Dest, { kind: 'reshade' });
+        log('added', { rel, version: pe.getFileVersion(installedHookPath) });
+      }
+    }
   }
 
   const addonRel = await copyTracked(
@@ -799,8 +826,8 @@ async function enableAddonInIni(exeDir, addonName, log, gameDir, manifest) {
         const zhDest = path.join(exeDir, zhFileName);
         await copyOver(zhSrc, zhDest);
         if (manifest && Array.isArray(manifest.added) && gameDir) {
-          const rel = relPath(gameDir, zhDest);
-          if (!manifest.added.includes(rel)) manifest.added.push(rel);
+          const rel = path.relative(gameDir, zhDest);
+          if (!rel.startsWith('..') && !path.isAbsolute(rel)) rememberAdded(manifest, rel);
         }
       }
     }
@@ -1187,7 +1214,8 @@ async function restoreFiles(gameDir, manifest, onLog) {
   const exeDir = path.dirname(path.join(gameDir, manifest.game.exe));
   for (const zhLeftover of [
     path.join(exeDir, 'host64', 'dlss5-zh-cn.addon64'),
-    path.join(exeDir, 'dlss5-zh-cn.addon64')
+    path.join(exeDir, 'dlss5-zh-cn.addon64'),
+    path.join(exeDir, 'dlss5-zh-cn.addon32')
   ]) {
     if (fs.existsSync(zhLeftover)) {
       try {
@@ -1208,7 +1236,7 @@ async function restoreFiles(gameDir, manifest, onLog) {
     }
   }
 
-  const leftovers = [...(manifest.reshade?.filesAdded || []), 'dlss5-zh-cn.addon64'];
+  const leftovers = [...(manifest.reshade?.filesAdded || []), 'dlss5-zh-cn.addon64', 'dlss5-zh-cn.addon32'];
   // The hook DLL and runtime-generated ReShade configs go when we were the ones
   // who put ReShade there (any pre-existing ReShade.ini is in manifest.replaced
   // and skipped below).

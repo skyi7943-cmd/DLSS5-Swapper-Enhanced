@@ -29,7 +29,7 @@ const SKIP_DIRS = new Set([
 const MAX_SCAN_DEPTH = 12;
 
 // Installers, launchers, crack loader stubs and anti-cheat helpers are never the game itself.
-const NOT_A_GAME = /^(unins|setup|install|vcredist|vc_redist|dxsetup|dxwebsetup|oalinst|uninstall|crashreport|crashhandler|bugreport|testapp|easyanticheat|eac|battleye|be_service|launcher|activation|patch|update|dotnetfx|touchup|rapidcrc|autorun|autoplay|quicksfv|readme|config|benchmark|report|helper|service|cleanup|modorganizer|redlauncher|skse\d*_loader|hlds\b|srcds\b|steamerrorreporter|dgvoodoocpl|reshade_setup|steamclient_loader|smartsteamloader|epic_emu_launcher|language_?changer|language_?selector)/i;
+const NOT_A_GAME = /^(unins|setup|install|vcredist|vc_redist|dxsetup|dxwebsetup|oalinst|uninstall|crashreport|crashhandler|bugreport|testapp|easyanticheat|eac|battleye|be_service|launcher|activation|patch|update|revupdat|dotnetfx|touchup|rapidcrc|autorun|autoplay|quicksfv|readme|config|benchmark|report|helper|service|cleanup|modorganizer|redlauncher|skse\d*_loader|hlds\b|hltv\b|srcds\b|steamerrorreporter|dgvoodoocpl|reshade_setup|steamclient_loader|smartsteamloader|epic_emu_launcher|language_?changer|language_?selector)/i;
 
 const DLSS_FILE = /^(nvngx_dlss[a-z_]*\.dll|nvngx\.dll|_nvngx\.dll)$/i;
 const STREAMLINE_FILE = /^sl\.[a-z_]+\.dll$/i;
@@ -86,6 +86,7 @@ function inspectReShade(exeDir) {
   try {
     names = names.concat(fs.readdirSync(exeDir).filter((f) => /\.asi$/i.test(f)));
   } catch {}
+  names.push('ReShade32.dll', 'ReShade64.dll');
 
   for (const name of names) {
     const file = path.join(exeDir, name);
@@ -94,7 +95,7 @@ function inspectReShade(exeDir) {
       return {
         installed: true,
         file: name,
-        kind: /\.asi$/i.test(name) ? 'asi' : 'proxy',
+        kind: /\.asi$/i.test(name) ? 'asi' : /^ReShade(?:32|64)\.dll$/i.test(name) ? 'preloader' : 'proxy',
         version: pe.getFileVersion(file),
         addonSupport: hasAddonSupport(file)
       };
@@ -397,7 +398,7 @@ function detectEngineApi(file) {
 // engines, video/audio codecs (Bink/Miles/FMOD/OpenAL), physics engines, shader
 // compilers, the graphics runtimes themselves, and the files this app and the
 // mods it sits beside put there. None of them is evidence that a folder holds a game.
-const NOT_A_RENDERER = /^(?:libglesv2|libegl|libcef|chrome_elf|cef|sciter.*|coherent.*|ultralight.*|awesomium.*|webview2loader|bink.*|smackw32|mss32|mss64|fmod.*|openal32|wrap_oal|xaudio2_.*|dsound|ak.*|cri_ware.*|avcodec.*|avformat.*|avutil.*|swscale.*|libvlc.*|physx.*|nxcharacter.*|apex_.*|cudart.*|havok.*|embree.*|tbb.*|xinput.*|dinput.*|sdl2_.*|dbghelp|symsrv|bugsplat.*|crash.*|sysinfo.*|xlive|gfwlivesdk|paul|uplay_.*|ubiorbitapi.*|d3dcompiler_\d+|dxcompiler|dxil|vulkan-1|opengl32|d3d\d+|d3d\d+core|dxgi|ddraw|d3dimm|nvngx.*|sl\..*|amd_.*|ffx_.*|reshade\d*|dlss5.*|dgvoodoo.*|qt\d.*|mono.*|steam_api.*|galaxy.*|eossdk.*|discord.*|gameoverlayrenderer.*|renodx.*)\.dll$/i;
+const NOT_A_RENDERER = /^(?:libglesv2|libegl|libcef|chrome_elf|cef|sciter.*|coherent.*|ultralight.*|awesomium.*|webview2loader|bink.*|smackw32|mss32|mss64|winmm|fmod.*|openal32|wrap_oal|xaudio2_.*|dsound|ak.*|cri_ware.*|avcodec.*|avformat.*|avutil.*|swscale.*|libvlc.*|physx.*|nxcharacter.*|apex_.*|cudart.*|havok.*|embree.*|tbb.*|xinput.*|dinput.*|sdl2_.*|dbghelp|symsrv|bugsplat.*|crash.*|sysinfo.*|xlive|gfwlivesdk|paul|uplay_.*|ubiorbitapi.*|d3dcompiler_\d+|dxcompiler|dxil|vulkan-1|opengl32|d3d\d+|d3d\d+core|dxgi|ddraw|d3dimm|nvngx.*|sl\..*|amd_.*|ffx_.*|reshade\d*|dlss5.*|dgvoodoo.*|qt\d.*|mono.*|steam_api.*|galaxy.*|eossdk.*|discord.*|gameoverlayrenderer.*|renodx.*)\.dll$/i;
 // Source 2 loads rendersystemdx11.dll itself, and installing into Dota 2 broke
 // it (#199). Its renderer is named so the reason is honest, but never offered.
 const NOT_OFFERED = /^rendersystem/i;
@@ -535,6 +536,8 @@ function playableRoleScore(exe) {
   if (/sp(?:[_-][^\\/]*)?\.exe$/.test(rel)) score += 2;
   if (/(?:^|[\\/])(?:multiplayer|online)(?:[\\/]|$)/.test(rel)) score -= 4;
   if (/mp(?:[_-][^\\/]*)?\.exe$/.test(rel)) score -= 2;
+  // 降低地图/任务/关卡编辑器 (如 dfxmed.exe / Df2med.exe / *_editor.exe) 的优先级，确保正式游戏主程序优先胜出
+  if (/(?:^|[\\/])(?:[a-z0-9]{2,}med|(?:[a-z0-9_-]*[_-])?editor|(?:map|world|level|mission)edit(?:or)?)\.exe$/.test(rel)) score -= 5;
   // Crack patches frequently rename the original DRM-protected executable to
   // <Game>_org.exe / <Game>_orig.exe / <Game>_bak.exe while placing the active
   // cracked executable at <Game>.exe. Penalize backup suffixes so the active

@@ -503,6 +503,152 @@ test('破解版与老版本 DLSS 专项兼容：深层 2.x/3.x 自动升级、DL
   }
 });
 
+test('v2.3.1 老游戏全面兼容审计：32位 DDraw/D3D8/D3D9/OpenGL 包装与桥接、dgVoodoo 防溢出伪全屏、Steam 安装脚本零 UAC 虚拟注册表、编辑器过滤与无损还原', async (t) => {
+  const { writePe } = require('./fixtures/pe');
+  const { scanGame, inspectReShade } = require('../src/core/scan');
+  const compatibility = require('../src/core/compatibility');
+  const applyCore = require('../src/core/apply');
+  const legacyInstallScript = require('../src/core/legacy-installscript');
+  const library = require('../src/library');
+
+  // 1. 验证 dgVoodoo 32 位专属配置（VRAM=1024 防 32 位 4GB 溢出、FullscreenAttributes=fake 防视频切换闪退、低分辨率枚举补充）
+  const dg32 = ini.configureDgVoodoo('', { bitness: 32, api: 'd3d8' });
+  assert.equal(ini.getIni(dg32, 'DirectX', 'VRAM'), '1024');
+  assert.equal(ini.getIni(dg32, 'GeneralExt', 'FullscreenAttributes'), 'fake');
+  assert.match(ini.getIni(dg32, 'DirectXExt', 'ExtraEnumeratedResolutions'), /640x480/);
+  const dg64 = ini.configureDgVoodoo('', { bitness: 64, api: 'd3d9' });
+  assert.equal(ini.getIni(dg64, 'DirectX', 'VRAM'), '4096');
+
+  // 2. 验证 Steam installscript.vdf + 关联 .reg 脚本解析与 VirtualHKLM 预置
+  const vdfTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-vdf-reg-'));
+  t.after(() => fs.rmSync(vdfTemp, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(vdfTemp, 'support'), { recursive: true });
+  fs.writeFileSync(path.join(vdfTemp, 'support', 'largestring.reg'), [
+    'REGEDIT4',
+    '',
+    '[HKEY_LOCAL_MACHINE\\SOFTWARE\\NovaLogic\\Delta Force: Xtreme\\1.00.0000]',
+    '"CDKIID"="TEST_CDKIID_TOKEN_12345"',
+    '"Build"=dword:00000010'
+  ].join('\r\n'), 'utf8');
+  fs.writeFileSync(path.join(vdfTemp, '32660_install.vdf'), [
+    '"Installscript"',
+    '{',
+    '  "Registry"',
+    '  {',
+    '    "HKEY_LOCAL_MACHINE\\\\SOFTWARE\\\\NovaLogic\\\\Delta Force: Xtreme\\\\1.00.0000"',
+    '    {',
+    '      "string"',
+    '      {',
+    '        "Path" "%INSTALLDIR%"',
+    '      }',
+    '    }',
+    '  }',
+    '  "Run Process"',
+    '  {',
+    '    "Large String"',
+    '    {',
+    '      "Process 1" "%windir%\\\\REGEDIT.exe"',
+    '      "Command 1" "/s \\"%INSTALLDIR%\\\\support\\\\largestring.reg\\""',
+    '    }',
+    '  }',
+    '}'
+  ].join('\r\n'), 'utf8');
+
+  const regCalls = [];
+  const seedRes = legacyInstallScript.seedInstallScriptRegistry(vdfTemp, vdfTemp, (args) => {
+    regCalls.push(args);
+    return '';
+  });
+  assert.equal(seedRes.seededKeys, 2);
+  assert.ok(regCalls.some((a) =>
+    a[0] === 'add' &&
+    a[1] === 'HKCU\\Software\\DLSS5Swapper\\VirtualHKLM\\NovaLogic\\Delta Force: Xtreme\\1.00.0000' &&
+    a.includes('Path') &&
+    a.includes(vdfTemp.replace(/[\\/]+$/, ''))
+  ), '应将 %INSTALLDIR% 展开后写入 HKCU VirtualHKLM');
+  assert.ok(regCalls.some((a) =>
+    a[0] === 'add' &&
+    a[1] === 'HKCU\\Software\\DLSS5Swapper\\VirtualHKLM\\NovaLogic\\Delta Force: Xtreme\\1.00.0000' &&
+    a.includes('CDKIID') &&
+    a.includes('TEST_CDKIID_TOKEN_12345')
+  ), '应解析关联 .reg 脚本并写入 CDKIID 校验串');
+
+  // 3. 验证地图编辑器 (dfxmed.exe) / 升级器 (REVUPDAT.EXE) 过滤、winmm.dll 免误判与 ReShade32.dll 识别
+  const dfxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-dfx-scan-'));
+  t.after(() => fs.rmSync(dfxDir, { recursive: true, force: true }));
+  writePe(path.join(dfxDir, 'DFX.EXE'), { bitness: 32, text: 'Direct3DCreate9', size: 64 * 1024 });
+  writePe(path.join(dfxDir, 'dfxmed.exe'), { bitness: 32, text: 'Direct3DCreate9', size: 128 * 1024 });
+  writePe(path.join(dfxDir, 'REVUPDAT.EXE'), { bitness: 32, text: 'DirectDrawCreate', size: 128 * 1024 });
+  writePe(path.join(dfxDir, 'winmm.dll'), { bitness: 32, text: 'Direct3DCreate8 Direct3DCreate9' });
+  fs.copyFileSync(path.join(PAYLOAD_DIR, 'reshade-vulkan', 'ReShade32.dll'), path.join(dfxDir, 'ReShade32.dll'));
+
+  const scanDfx = await scanGame(dfxDir);
+  assert.equal(scanDfx.chosen.name, 'DFX.EXE', '应排除升级器并对 *med.exe 地图编辑器降权，准确选中游戏主程序 DFX.EXE');
+  assert.equal(scanDfx.chosen.api, 'd3d9');
+  const rsCheck = inspectReShade(dfxDir);
+  assert.equal(rsCheck.installed, true);
+  assert.equal(rsCheck.file, 'ReShade32.dll');
+  assert.equal(rsCheck.kind, 'preloader');
+
+  // 4. 验证 Steam GoldSrc 共享基底包去重优先级 (Counter-Strike StateFlags=4 优先于 Half-Life StateFlags=68)
+  const sharedHlDir = path.join(vdfTemp, 'Half-Life');
+  const deduped = library.dedupe([
+    { launcher: 'Steam', id: '70', name: 'Half-Life', dir: sharedHlDir, stateFlags: 68 },
+    { launcher: 'Steam', id: '10', name: 'Counter-Strike', dir: sharedHlDir, stateFlags: 4 }
+  ]);
+  assert.equal(deduped.length, 1);
+  assert.equal(deduped[0].id, '10');
+  assert.equal(deduped[0].name, 'Counter-Strike');
+
+  // 5. 验证 32 位 DirectDraw 老游戏完整部署 (DDraw.dll + D3DImm.dll + winmm.dll + dlss5-zh-cn.addon32 + dgVoodoo.conf + dxgi.dll + host64) 与兼容性守卫及无损还原
+  const scratchBase = fs.existsSync('E:\\Antigravity_Scratch') ? 'E:\\Antigravity_Scratch' : ROOT;
+  const ddrawDir = fs.mkdtempSync(path.join(scratchBase, '.tmp-dlss5-legacy-ddraw-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-ddraw-userdata-'));
+  t.after(() => {
+    fs.rmSync(ddrawDir, { recursive: true, force: true });
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  });
+  const ddrawExe = path.join(ddrawDir, 'Df2.exe');
+  writePe(ddrawExe, { bitness: 32, text: 'DirectDrawCreate' });
+
+  const resDdraw = await combinedManager.applyCombinedConfiguration(ddrawDir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'off',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(resDdraw.ok, true);
+  assert.equal(fs.existsSync(path.join(ddrawDir, 'DDraw.dll')), true);
+  assert.equal(fs.existsSync(path.join(ddrawDir, 'D3DImm.dll')), true);
+  assert.equal(fs.existsSync(path.join(ddrawDir, 'winmm.dll')), true);
+  assert.equal(fs.existsSync(path.join(ddrawDir, 'dxgi.dll')), true);
+  assert.equal(fs.existsSync(path.join(ddrawDir, 'dlss5-zh-cn.addon32')), true);
+  const deployedDgConf = fs.readFileSync(path.join(ddrawDir, 'dgVoodoo.conf'), 'utf8');
+  assert.equal(ini.getIni(deployedDgConf, 'DirectX', 'VRAM'), '1024');
+  assert.equal(ini.getIni(deployedDgConf, 'GeneralExt', 'FullscreenAttributes'), 'fake');
+
+  // 再次检查兼容性守卫与安全钩子选择器，确认已部署 dgVoodoo 的 DDraw/D3D9 不会触发伪冲突
+  assert.doesNotThrow(() => compatibility.assertLoaderCompatible({
+    gameDir: ddrawDir,
+    exePath: ddrawExe,
+    api: 'ddraw',
+    bitness: 32,
+    route: 'feeder',
+    reshadeProxy: 'dxgi'
+  }, null));
+  const safeHook = applyCore.selectSafeReShadeHook(ddrawDir, 'ddraw', 'dxgi', 32);
+  assert.equal(safeHook.hook, 'dxgi.dll');
+
+  assert.equal(await backends.restore(ddrawDir), true);
+  assert.equal(fs.existsSync(path.join(ddrawDir, 'DDraw.dll')), false);
+  assert.equal(fs.existsSync(path.join(ddrawDir, 'D3DImm.dll')), false);
+  assert.equal(fs.existsSync(path.join(ddrawDir, 'winmm.dll')), false);
+  assert.equal(fs.existsSync(path.join(ddrawDir, 'dlss5-zh-cn.addon32')), false);
+  assert.equal(fs.existsSync(path.join(ddrawDir, 'host64')), false);
+});
+
 
 
 

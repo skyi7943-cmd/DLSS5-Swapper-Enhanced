@@ -406,6 +406,14 @@ if (fs.existsSync(ENHANCED_CACHE)) {
   ]) {
     stageIfPresent(`DLSS5-Feeder-1.19.0/${rel}`, `feeder-1.19.0/${rel}`);
   }
+  for (const sub of ['components', 'zh-cn']) {
+    const subDir = path.join(ENHANCED_CACHE, sub);
+    if (fs.existsSync(subDir)) {
+      for (const f of fs.readdirSync(subDir)) {
+        if (!/\.(pdb|lib)$/i.test(f)) stageIfPresent(`${sub}/${f}`, `${sub}/${f}`);
+      }
+    }
+  }
 }
 
 const total = fs

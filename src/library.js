@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const pe = require('./core/pe');
 
 // Entries that are tooling rather than games.
 const NOT_A_GAME = /redistributabl|steamworks common|directx|vcredist|proton|steam linux runtime|soundtrack/i;
@@ -111,12 +112,14 @@ function steam(options = {}) {
         const appid = kv(text, 'appid');
         const installdir = kv(text, 'installdir');
         const name = kv(text, 'name') || installdir;
+        const stateFlags = Number(kv(text, 'StateFlags') || 0);
         if (!appid || !installdir || NOT_A_GAME.test(name)) continue;
         const dir = path.join(appsDir, 'common', installdir);
         if (!fs.existsSync(dir)) continue;
         games.push({
           launcher: 'Steam', id: appid, name, dir, poster: steamPoster(base, appid),
           steamRoot: base,
+          stateFlags,
           // A prefix only exists for titles launched through Steam Play. This
           // metadata lets the installer run the Windows ReShade setup in the
           // same Proton bottle as the game instead of invoking a host Wine.
@@ -131,7 +134,7 @@ function steam(options = {}) {
             if (!entry.isDirectory() || NOT_A_GAME.test(entry.name) || NOT_A_GAME_DIR.test(entry.name)) continue;
             const dir = path.join(commonDir, entry.name);
             const norm = path.resolve(dir).toLowerCase();
-            if (seenDirs.has(norm) || !holdsGame(dir, 2)) continue;
+            if (seenDirs.has(norm) || !holdsGame(dir, 2) || isBrokenSteamOrphan(dir)) continue;
             seenDirs.add(norm);
             games.push({ launcher: 'Steam', id: null, name: entry.name, dir, poster: null, steamRoot: base, protonPrefix: null });
           }
@@ -254,6 +257,37 @@ function isUnrealGameRoot(dir) {
 }
 
 const NOT_A_GAME_DIR = /^(steamapps|gamesave|gamesaves|workshop|downloading|shadercache|temp|tmp|backup|_dlss5_backup|reshade-shaders|host64|saves?|savegames?|redist|_?commonredist|installers?|setup|dlc|mods?|tools?)$/i;
+
+// Steam 卸载游戏时仅清理 depot 清单内文件，用户曾打过补丁/MOD 的目录可能残留孤立的 .exe，
+// 但核心引擎依赖库（如 vorbisfile.dll / eax.dll 等）已被删除，启动必报 0xC0000135。
+// 对无 appmanifest_*.acf 的 steamapps\common 孤立目录做轻量导入库完整性校验，避免将卸载残骸误识别为已安装游戏。
+function isBrokenSteamOrphan(dir) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+  const exes = entries.filter((e) => e.isFile() && /\.exe$/i.test(e.name) && !NOT_A_GAME_EXE.test(e.name));
+  if (!exes.length) return false;
+  const localFiles = new Set(entries.filter((e) => e.isFile()).map((e) => e.name.toLowerCase()));
+  const winRoot = process.env.SystemRoot || 'C:\\Windows';
+  const sys32 = path.join(winRoot, 'System32');
+  const wow64 = path.join(winRoot, 'SysWOW64');
+
+  return exes.every((exeEntry) => {
+    const exePath = path.join(dir, exeEntry.name);
+    let imports = [];
+    try { imports = pe.getImports(exePath); } catch { return false; }
+    if (!imports.length) return false;
+    const bitness = pe.getBitness(exePath);
+    const sysDir = bitness === 32 && fs.existsSync(wow64) ? wow64 : sys32;
+    return imports.some((imp) => {
+      const lower = String(imp || '').toLowerCase();
+      if (!lower.endsWith('.dll') || lower.startsWith('api-ms-win-') || lower.startsWith('ext-ms-win-')) return false;
+      if (/^(msvcr|msvcp|vcruntime|vcomp|mfc\d|atl\d)/i.test(lower)) return false;
+      if (localFiles.has(lower)) return false;
+      if (fs.existsSync(path.join(sysDir, imp)) || fs.existsSync(path.join(sys32, imp))) return false;
+      return true;
+    });
+  });
+}
 
 // A game folder holds a runnable file somewhere near its top. Three levels
 // covers a repack that buries it - Golf.Gambit.v1.0.5-EA-OFME\Golf Gambit\ -
@@ -445,9 +479,14 @@ function dedupe(games) {
     const key = path.resolve(g.dir).toLowerCase();
     const existing = seen.get(key);
     // A launcher entry carries a real name and art, so it wins over a folder.
+    // Steam GoldSrc 共享基底包 (如仅装了 Counter-Strike 时的 Half-Life StateFlags=68, 含 StateSharedOnly=64)
+    // 不包含单机 client.dll，应优先保留真正已安装的独立游戏条目 (StateFlags=4)。
     const dlc = game => /\bdlc\b|phantom liberty/i.test(game.name || '');
-    if (!existing || (dlc(existing) && !dlc(g)) ||
-        (!dlc(g) && existing.launcher.startsWith('My folders') && !g.launcher.startsWith('My folders'))) {
+    const sharedStub = game => Boolean(game && game.stateFlags && (game.stateFlags & 64));
+    if (!existing ||
+        (sharedStub(existing) && !sharedStub(g)) ||
+        (!sharedStub(g) && dlc(existing) && !dlc(g)) ||
+        (!sharedStub(g) && !dlc(g) && existing.launcher.startsWith('My folders') && !g.launcher.startsWith('My folders'))) {
       seen.set(key, g);
     }
   }
