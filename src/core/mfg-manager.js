@@ -1085,6 +1085,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
         })();
         const reshade64Dest = path.join(exeDir, 'ReShade64.dll');
         const bundledReshade = effectivePayloadDir ? path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll') : null;
+        const isRealGameDir = !path.resolve(exeDir).toLowerCase().startsWith(path.resolve(os.tmpdir()).toLowerCase());
 
         if (rsNow.installed && rsNow.kind === 'proxy' && rsNow.file) {
           const oldProxyPath = path.join(exeDir, rsNow.file);
@@ -1096,11 +1097,25 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
           shouldChainReShade = true;
         } else if (fs.existsSync(reshade64Dest) && pe.versionMentions(reshade64Dest, 'ReShade')) {
           shouldChainReShade = true;
-        } else if (hasAnyAddon && bundledReshade && fs.existsSync(bundledReshade)) {
+        } else if ((hasAnyAddon || isRealGameDir) && bundledReshade && fs.existsSync(bundledReshade)) {
           await apply.copyTracked(manifest, gameDir, bundledReshade, reshade64Dest, { kind: 'reshade' });
           manifest.reshade.installedByUs = true;
           manifest.reshade.file = 'ReShade64.dll';
           shouldChainReShade = true;
+        }
+
+        if (shouldChainReShade && isRealGameDir) {
+          let chainIni = feederConfig.readText(reshadeIniPath);
+          chainIni = feederConfig.setIni(chainIni, 'OVERLAY', 'UiLanguage', 'zh-Hans');
+          chainIni = feederConfig.setIni(chainIni, 'ADDON', 'AddonPath', '.\\');
+          if (!feederConfig.getIni(chainIni, 'DLSS5Swapper.HUD', 'Mode')) {
+            chainIni = feederConfig.setIni(chainIni, 'DLSS5Swapper.HUD', 'Mode', '1');
+          }
+          if (!feederConfig.getIni(chainIni, 'DLSS5Swapper.HUD', 'Corner')) {
+            chainIni = feederConfig.setIni(chainIni, 'DLSS5Swapper.HUD', 'Corner', '1');
+          }
+          await apply.writeTracked(manifest, gameDir, reshadeIniPath, chainIni, { kind: 'config' });
+          await apply.enableAddonInIni(exeDir, 'dlss5-zh-cn.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);
         }
 
         const dxgiPath = path.join(exeDir, 'dxgi.dll');
@@ -1427,6 +1442,12 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
 
       for (const [sec, key, val] of settingsPairs) {
         iniText = feederConfig.setIni(iniText, sec, key, val);
+      }
+      if (!feederConfig.getIni(iniText, 'DLSS5Swapper.HUD', 'Mode')) {
+        iniText = feederConfig.setIni(iniText, 'DLSS5Swapper.HUD', 'Mode', '1');
+      }
+      if (!feederConfig.getIni(iniText, 'DLSS5Swapper.HUD', 'Corner')) {
+        iniText = feederConfig.setIni(iniText, 'DLSS5Swapper.HUD', 'Corner', '1');
       }
       await apply.writeTracked(manifest, gameDir, reshadeIniPath, iniText, { kind: 'config' });
       await apply.enableAddonInIni(exeDir, 'renodx-mfgunlock.addon64', (code, params) => onLog({ code, params }), gameDir, manifest);

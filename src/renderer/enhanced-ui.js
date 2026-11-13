@@ -84,7 +84,10 @@
         mfgMode: currentMfgMode,
         mfgBackend: currentMfgBackend,
         anrSceneCut: currentAnrSceneCut,
-        hdrCompatibility: false
+        hdrCompatibility: false,
+        hudMode: status?.hud?.mode ?? 1,
+        hudCorner: status?.hud?.corner ?? 1,
+        hudDirty: false
       });
     }
     const d = draftState.get(dir);
@@ -92,6 +95,8 @@
     if (!d.neuralModelId) d.neuralModelId = status?.neural?.currentModel?.id || '310.8.SF-v2';
     if (!d.mfgBackend) d.mfgBackend = status?.mfg?.currentConfig?.backend === 'anr-fg' ? 'anr-fg' : 'auto';
     if (d.anrSceneCut === undefined) d.anrSceneCut = status?.mfg?.currentConfig?.settings?.sceneCut !== false;
+    if (d.hudMode === undefined) d.hudMode = status?.hud?.mode ?? 1;
+    if (d.hudCorner === undefined) d.hudCorner = status?.hud?.corner ?? 1;
     return d;
   }
 
@@ -519,6 +524,7 @@
               <div class="enh-kv-row"><span class="k">图形 API (Graphics API)</span><span class="v">${escHtml(diag.graphicsApi || 'DirectX 12')} (${status.bitness || 64}-bit)</span></div>
               <div class="enh-kv-row"><span class="k">神经渲染状态 (Neural Rendering Status)</span><span class="v">${escHtml(diag.neuralStatus || '尚未测试')}</span></div>
               <div class="enh-kv-row"><span class="k">MFG 状态 (MFG Status)</span><span class="v">${escHtml(diag.mfgStatus || '尚未测试')}</span></div>
+              <div class="enh-kv-row"><span class="k">游戏内性能监控 (In-Game HUD · F7)</span><span class="v">${status?.hud?.installed ? `已就绪 · 当前：${draft.hudMode === 2 ? '详细双行监控卡' : (draft.hudMode === 0 ? '关闭隐藏' : '精简监控条')} · ${['左上角', '右上角', '左下角', '右下角'][draft.hudCorner] || '右上角'} (按 F7 随时切换)` : '待注入（加载任意模块自动启用，或点击下方「单独应用监控小插件」）'}</span></div>
               <div class="enh-kv-row"><span class="k">无 DLSS / 低版本 / 破解兼容 (DLSS & Crack Compat)</span><span class="v">${escHtml(coExec.dlssCompat?.summary || '已启用无 DLSS 光流注入、深层旧版 DLSS 自动升级与补丁防覆盖保护')}</span></div>
               <div class="enh-kv-row"><span class="k">DLL 冲突 (DLL Conflicts)</span><span class="v">${diag.dllConflicts?.length ? escHtml(diag.dllConflicts.map((c) => c.message).join('；')) : '无冲突 (0 项冲突)'}</span></div>
               <div class="enh-kv-row"><span class="k">错误日志 (Error Logs)</span><span class="v">${diag.errorLogs?.length ? escHtml(diag.errorLogs.join(' | ')) : '无错误记录 (0 项异常)'}</span></div>
@@ -547,6 +553,36 @@
                   <div class="enh-check-detail">${escHtml(item.detail)}</div>
                 </div>
               `).join('')}
+            </div>
+
+            <!-- 游戏内帧率 · 显存用量 · 整体延迟监控小插件控制栏 -->
+            <div class="enh-hud-bar" aria-label="In-Game Performance HUD Monitor">
+              <div class="enh-hud-head">
+                <div>
+                  <h5>📊 游戏内实时性能监控小插件（帧率 · 显存用量 · 整体延迟）</h5>
+                  <span>零鼠标穿透干扰 · 支持 NVAPI 硬件显存 &amp; Reflex 硬件级延迟检测 · 游戏内按 <b>F7</b> 一键循环切换或隐藏</span>
+                </div>
+                ${status?.hud?.installed
+                  ? renderStatusBadge('verified', '监控插件已就绪 · F7 切换')
+                  : renderStatusBadge('untested', '随模块自动启用 / 可独立注入')}
+              </div>
+              <div class="enh-hud-controls">
+                <div class="enh-hud-modes" role="group" aria-label="监控显示模式">
+                  <button type="button" class="enh-hud-mode-btn ${draft.hudMode === 1 ? 'active' : ''}" data-hud-mode="1">精简监控条 (推荐)</button>
+                  <button type="button" class="enh-hud-mode-btn ${draft.hudMode === 2 ? 'active' : ''}" data-hud-mode="2">详细双行监控卡</button>
+                  <button type="button" class="enh-hud-mode-btn ${draft.hudMode === 0 ? 'active' : ''}" data-hud-mode="0">关闭隐藏</button>
+                </div>
+                <label class="enh-hud-corner">
+                  <span>位置：</span>
+                  <select data-enh-field="hudCorner">
+                    <option value="1" ${draft.hudCorner === 1 ? 'selected' : ''}>右上角 (推荐·不挡 Home 菜单)</option>
+                    <option value="0" ${draft.hudCorner === 0 ? 'selected' : ''}>左上角 (Top-Left)</option>
+                    <option value="2" ${draft.hudCorner === 2 ? 'selected' : ''}>左下角 (Bottom-Left)</option>
+                    <option value="3" ${draft.hudCorner === 3 ? 'selected' : ''}>右下角 (Bottom-Right)</option>
+                  </select>
+                </label>
+                <button type="button" class="enh-btn hud-apply" data-enh-act="apply-hud">📊 单独应用监控小插件 (F7)</button>
+              </div>
             </div>
 
             <div class="enh-master-bar">
@@ -620,6 +656,14 @@
       };
     }
 
+    for (const hBtn of container.querySelectorAll('[data-hud-mode]')) {
+      hBtn.onclick = () => {
+        draft.hudMode = Number(hBtn.dataset.hudMode);
+        draft.hudDirty = true;
+        onUpdated();
+      };
+    }
+
     for (const sel of container.querySelectorAll('[data-enh-field]')) {
       sel.onchange = () => {
         const field = sel.dataset.enhField;
@@ -627,6 +671,9 @@
           draft.hdrCompatibility = sel.value === 'true';
         } else if (field === 'anrSceneCut') {
           draft.anrSceneCut = sel.value !== 'false';
+        } else if (field === 'hudCorner') {
+          draft.hudCorner = Number(sel.value);
+          draft.hudDirty = true;
         } else if (field === 'neuralModelId') {
           draft.neuralModelId = sel.value;
           if (sel.value === '310.8.0-RTX40') draft.neuralMode = 'legacy';
@@ -642,9 +689,13 @@
       const buttons = container.querySelectorAll('button, select');
       buttons.forEach((b) => { b.disabled = true; });
       try {
+        const hudExtras = draft.hudDirty
+          ? { hudMode: draft.hudMode, hudCorner: draft.hudCorner }
+          : {};
         const finalPayload = {
           hardwareProfile: draft.hardwareProfile || activeGlobalProfile || 'rtx40_laptop',
           neuralModelId: draft.neuralModelId || '310.8.SF-v2',
+          ...hudExtras,
           ...payload
         };
         const engineTag = finalPayload.mfgBackend === 'anr-fg' ? 'ANR省显存引擎' : 'NVIDIA原生MFG';
@@ -671,6 +722,12 @@
             if (typeof root.jobLog === 'function') root.jobLog(skipMsg);
             if (typeof root.log === 'function') root.log(skipMsg);
           }
+          if (finalPayload.hudStandalone) {
+            const hudMsg = `Enhanced: 已单独部署/更新游戏内性能监控小插件（按 F7 键切换帧率 · 显存用量 · 整体延迟）。`;
+            if (typeof root.jobLog === 'function') root.jobLog(hudMsg);
+            if (typeof root.log === 'function') root.log(hudMsg);
+          }
+          draft.hudDirty = false;
           if (typeof root.jobLog === 'function') root.jobLog('Enhanced: 配置已成功写入并建立事务备份。');
         }
       } catch (err) {
@@ -746,6 +803,16 @@
       };
     }
 
+    const btnApplyHud = container.querySelector('[data-enh-act="apply-hud"]');
+    if (btnApplyHud) {
+      btnApplyHud.onclick = () => runAction({
+        hudMode: draft.hudMode,
+        hudCorner: draft.hudCorner,
+        hudStandalone: true,
+        hardwareProfile: draft.hardwareProfile
+      });
+    }
+
     const btnApplyCombined = container.querySelector('[data-enh-act="apply-combined"]');
     if (btnApplyCombined) {
       btnApplyCombined.onclick = () => runAction({
@@ -790,6 +857,10 @@
     if (!status) return;
     if (status.hardwareProfile) {
       activeGlobalProfile = status.hardwareProfile;
+    }
+    if (existingDraft && !existingDraft.hudDirty && status.hud) {
+      existingDraft.hudMode = status.hud.mode;
+      existingDraft.hudCorner = status.hud.corner;
     }
     const render = () => {
       container.innerHTML = buildThreePanelsHtml(dir, status, modelsInfo, container.dataset.enhPrefix || 'sheet');
@@ -878,8 +949,8 @@
     view.innerHTML = `
       <div class="section-head">
         <div>
-          <h3>DLSS 5 + 全系 MFG / ANR 超省显存多帧生成控制中心 <span class="beta-tag" style="margin-left:8px">ENHANCED v2.3.4</span></h3>
-          <p class="hint">支持【笔记本 40 系列】【40 系桌面卡】【50 系列桌面卡】三档专属调优，新增可选「ANR 超省显存通用多帧生成（实验性 · 省 62% 显存 · 全显卡通吃 2X~6X）」；游戏内按 <b>Home</b> 键即可实时调节 DLSS 5</p>
+          <h3>DLSS 5 + 全系 MFG / ANR 超省显存多帧生成控制中心 <span class="beta-tag" style="margin-left:8px">ENHANCED v2.3.5</span></h3>
+          <p class="hint">支持【笔记本 40 系列】【40 系桌面卡】【50 系列桌面卡】三档专属调优，内置「ANR 超省显存通用多帧生成（2X~6X）」与「游戏内帧率 · 显存 · 整体延迟监控小插件」；游戏内按 <b>F7</b> 切换性能监控，按 <b>Home</b> 实时快调 DLSS 5</p>
         </div>
       </div>
 

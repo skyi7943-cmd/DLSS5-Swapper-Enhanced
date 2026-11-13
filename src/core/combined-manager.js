@@ -435,6 +435,34 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
   };
 }
 
+// 检测游戏内实时性能监控小插件（帧率 · 显存用量 · 整体延迟）状态与持久化配置
+function inspectHudStatus(exeDir, scan) {
+  const bitness = scan?.chosen?.bitness || 64;
+  const zhAddonName = bitness === 32 ? 'dlss5-zh-cn.addon32' : 'dlss5-zh-cn.addon64';
+  const zhAddonExists = fs.existsSync(path.join(exeDir, zhAddonName));
+  const reshadeIniPath = path.join(exeDir, 'ReShade.ini');
+  const iniText = feederConfig.readText(reshadeIniPath);
+  const rawMode = feederConfig.getIni(iniText, 'DLSS5Swapper.HUD', 'Mode');
+  const rawCorner = feederConfig.getIni(iniText, 'DLSS5Swapper.HUD', 'Corner');
+  const parsedMode = rawMode !== null && rawMode !== undefined && String(rawMode).trim() !== '' ? Number(rawMode) : 1;
+  const parsedCorner = rawCorner !== null && rawCorner !== undefined && String(rawCorner).trim() !== '' ? Number(rawCorner) : 1;
+  const mode = [0, 1, 2].includes(parsedMode) ? parsedMode : 1;
+  const corner = [0, 1, 2, 3].includes(parsedCorner) ? parsedCorner : 1;
+  const reshadePresent = Boolean(
+    scan?.reshade?.installed ||
+    fs.existsSync(path.join(exeDir, 'ReShade64.dll')) ||
+    fs.existsSync(path.join(exeDir, 'ReShade32.dll'))
+  );
+  return {
+    installed: Boolean(zhAddonExists && reshadePresent),
+    addonFile: zhAddonName,
+    mode, // 0: 关闭隐藏, 1: 精简监控条 (默认), 2: 详细监控卡
+    corner, // 0: 左上角, 1: 右上角 (默认·不挡菜单), 2: 左下角, 3: 右下角
+    configuredInIni: rawMode !== null && rawMode !== undefined && String(rawMode).trim() !== '',
+    hotkey: 'F7'
+  };
+}
+
 // 获取游戏的三大核心模块完整状态与诊断报告（供 UI 面板一次性渲染）
 async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwareProfile, mfgBackend } = {}) {
   const hardware = await detectHardwareEnvironment();
@@ -449,11 +477,13 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, driverVersion, hardwareProfile: effectiveProfile, mfgBackend })
   ]);
 
+  const exeDirForInspect = scan.chosen ? path.dirname(scan.chosen.path) : gameDir;
   const tuning = singlePassTuning.inspectGameTuning(gameDir, {
-    exeDir: scan.chosen ? path.dirname(scan.chosen.path) : gameDir,
+    exeDir: exeDirForInspect,
     bitness: scan.chosen ? scan.chosen.bitness : null,
     hardwareProfile: effectiveProfile
   });
+  const hud = inspectHudStatus(exeDirForInspect, scan);
 
   const coExecution = evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, effectiveProfile, tuning);
 
@@ -500,6 +530,7 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     },
     neural: neuralStatus,
     mfg: mfgStatus,
+    hud,
     singlePassTuning: tuning,
     singlePassPresets: singlePassTuning.SINGLE_PASS_PRESETS,
     diagnostics: {
@@ -533,6 +564,9 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     ensureStreamline = true,
     hardwareProfile,
     singlePassTuning: requestedTuning,
+    hudMode, // 0 | 1 | 2（可选）
+    hudCorner, // 0 | 1 | 2 | 3（可选）
+    hudStandalone = false, // 单独部署/更新游戏内性能监控小插件
     payloadDir,
     userDataDir
   } = config;
@@ -608,6 +642,15 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
   const profileChangedFromPrev = Boolean(prevManifest?.hardwareProfile && prevManifest.hardwareProfile !== effectiveProfile);
   const preApplyTuningSnapshot = hadPreExistingUserTuning
     ? singlePassTuning.inspectGameTuning(gameDir, { exeDir, bitness: targetBitness, hardwareProfile: effectiveProfile })
+    : null;
+  const preGameIniText = feederConfig.readText(path.join(exeDir, 'ReShade.ini'));
+  const preRawHudMode = feederConfig.getIni(preGameIniText, 'DLSS5Swapper.HUD', 'Mode');
+  const preRawHudCorner = feederConfig.getIni(preGameIniText, 'DLSS5Swapper.HUD', 'Corner');
+  const preHudMode = preRawHudMode !== null && preRawHudMode !== undefined && String(preRawHudMode).trim() !== '' && [0, 1, 2].includes(Number(preRawHudMode))
+    ? Number(preRawHudMode)
+    : null;
+  const preHudCorner = preRawHudCorner !== null && preRawHudCorner !== undefined && String(preRawHudCorner).trim() !== '' && [0, 1, 2, 3].includes(Number(preRawHudCorner))
+    ? Number(preRawHudCorner)
     : null;
 
   let neuralResult = null;
@@ -1036,6 +1079,127 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     }
   }
 
+  // 5. 同步或独立部署游戏内性能监控小插件（帧率 · 显存用量 · 整体延迟 | F7 快捷键）：
+  //    - 若用户在游戏内通过 F7 / Home 菜单修改过 Mode / Corner 且桌面端未显式指定覆盖，自动保留游戏内设定；
+  //    - 若调用方传入 hudStandalone=true，则支持在未开启 DLSS 5 / MFG 的任意 32/64 位游戏上独立安全挂载监控小插件，并完整纳入 _DLSS5_Backup 事务。
+  const effectiveHudMode = hudMode !== undefined && [0, 1, 2].includes(Number(hudMode))
+    ? Number(hudMode)
+    : (preHudMode ?? 1);
+  const effectiveHudCorner = hudCorner !== undefined && [0, 1, 2, 3].includes(Number(hudCorner))
+    ? Number(hudCorner)
+    : (preHudCorner ?? 1);
+  const isRealGameDir = !path.resolve(exeDir).toLowerCase().startsWith(path.resolve(os.tmpdir()).toLowerCase());
+  const isTurningAllOff = (neuralMode === 'off' && (mfgMode === undefined || mfgMode === 'off')) ||
+    (mfgMode === 'off' && neuralMode === undefined);
+  const shouldSyncHud = Boolean(
+    hudStandalone ||
+    hudMode !== undefined ||
+    hudCorner !== undefined ||
+    (!isTurningAllOff && isRealGameDir && fs.existsSync(reshadeIni))
+  );
+
+  if (shouldSyncHud && effectivePayloadDir) {
+    await journal.transaction(gameDir, async () => {
+      const manifest = apply.beginManifest(gameDir, exePath, targetApi);
+      manifest.hardwareProfile = effectiveProfile;
+      const zhAddonName = targetBitness === 32 ? 'dlss5-zh-cn.addon32' : 'dlss5-zh-cn.addon64';
+      const srcZhAddon = path.join(effectivePayloadDir, 'enhanced', 'zh-cn', zhAddonName);
+
+      if (hudStandalone) {
+        const { inspectReShade } = require('./scan');
+        const rsNow = inspectReShade(exeDir);
+        const hasChainedReshade = (
+          fs.existsSync(path.join(exeDir, 'ReShade64.dll')) && pe.versionMentions(path.join(exeDir, 'ReShade64.dll'), 'ReShade')
+        ) || (
+          fs.existsSync(path.join(exeDir, 'ReShade32.dll')) && pe.versionMentions(path.join(exeDir, 'ReShade32.dll'), 'ReShade')
+        );
+
+        if (!rsNow.installed && !hasChainedReshade) {
+          if (targetApi === 'vulkan') {
+            const vulkanLayer = require('./vulkan-layer');
+            const vkSrcDir = path.join(effectivePayloadDir, 'reshade-vulkan');
+            const vkTargetDir = path.join(effectiveUserDataDir, 'reshade-vulkan');
+            const vkDll = targetBitness === 32 ? 'ReShade32.dll' : 'ReShade64.dll';
+            if (fs.existsSync(path.join(vkSrcDir, vkDll))) {
+              manifest.vulkanLayer = await vulkanLayer.register({
+                sourceDir: vkSrcDir,
+                targetDir: vkTargetDir,
+                gameDir,
+                bitness: targetBitness
+              });
+            }
+          } else {
+            const bundledReshade = path.join(
+              effectivePayloadDir,
+              'reshade-vulkan',
+              targetBitness === 32 ? 'ReShade32.dll' : 'ReShade64.dll'
+            );
+            if (fs.existsSync(bundledReshade)) {
+              const isForeignProxy = (p) => fs.existsSync(p) &&
+                !(apply.isAddonReShade && apply.isAddonReShade(p)) &&
+                !pe.versionMentions(p, 'ReShade');
+              let hookName = 'dxgi.dll';
+              let chainedOpti = false;
+              if (targetApi === 'd3d9' && !fs.existsSync(path.join(exeDir, 'dgVoodoo.conf'))) {
+                hookName = !isForeignProxy(path.join(exeDir, 'd3d9.dll')) ? 'd3d9.dll' : 'dinput8.dll';
+              } else if (['d3d8', 'ddraw'].includes(targetApi) && !fs.existsSync(path.join(exeDir, 'dgVoodoo.conf'))) {
+                const dgDir = await ensureDgVoodoo(effectiveUserDataDir);
+                const archSub = targetBitness === 32 ? 'x86' : 'x64';
+                for (const wName of ['D3D8.dll', 'DDraw.dll', 'D3DImm.dll']) {
+                  const wSrc = path.join(dgDir, 'MS', archSub, wName);
+                  if (fs.existsSync(wSrc)) {
+                    await apply.copyTracked(manifest, gameDir, wSrc, path.join(exeDir, wName), { kind: 'wrapper' });
+                  }
+                }
+                const dgConfSrc = path.join(dgDir, 'dgVoodoo.conf');
+                if (fs.existsSync(dgConfSrc)) {
+                  await apply.copyTracked(manifest, gameDir, dgConfSrc, path.join(exeDir, 'dgVoodoo.conf'), { kind: 'config' });
+                }
+                hookName = !isForeignProxy(path.join(exeDir, 'dxgi.dll')) ? 'dxgi.dll' : 'd3d11.dll';
+              } else {
+                const safeHook = apply.selectSafeReShadeHook
+                  ? apply.selectSafeReShadeHook(exeDir, targetApi, targetApiLabel, config.reshadeProxy || 'dxgi')
+                  : { hook: targetApi === 'opengl' ? 'opengl32.dll' : 'dxgi.dll' };
+                hookName = safeHook.hook || 'dxgi.dll';
+                chainedOpti = Boolean(safeHook.chainedViaOptiScaler);
+              }
+              const hookDest = path.join(exeDir, hookName);
+              const hookExisted = fs.existsSync(hookDest);
+              await apply.copyTracked(manifest, gameDir, bundledReshade, hookDest, { kind: 'reshade' });
+              manifest.reshade.installedByUs = !hookExisted;
+              manifest.reshade.file = hookName;
+              if (chainedOpti && fs.existsSync(path.join(exeDir, 'OptiScaler.ini'))) {
+                const optiIniPath = path.join(exeDir, 'OptiScaler.ini');
+                let optiText = feederConfig.readText(optiIniPath);
+                optiText = feederConfig.setIni(optiText, 'Plugins', 'LoadReshade', 'true');
+                await apply.writeTracked(manifest, gameDir, optiIniPath, optiText, { kind: 'config' });
+              }
+            }
+          }
+        }
+      }
+
+      if (fs.existsSync(srcZhAddon) && (hudStandalone || isRealGameDir)) {
+        await apply.copyTracked(manifest, gameDir, srcZhAddon, path.join(exeDir, zhAddonName), { kind: 'addon' });
+      }
+      if (hudStandalone || fs.existsSync(reshadeIni)) {
+        let iniText = feederConfig.readText(reshadeIni);
+        iniText = feederConfig.setIni(iniText, 'OVERLAY', 'UiLanguage', 'zh-Hans');
+        if (effectiveHudMode > 0) {
+          iniText = feederConfig.setIni(iniText, 'OVERLAY', 'ShowFPS', '0');
+          iniText = feederConfig.setIni(iniText, 'OVERLAY', 'ShowFrameTime', '0');
+        }
+        iniText = feederConfig.setIni(iniText, 'ADDON', 'AddonPath', '.\\');
+        iniText = feederConfig.setIni(iniText, 'DLSS5Swapper.HUD', 'Mode', String(effectiveHudMode));
+        iniText = feederConfig.setIni(iniText, 'DLSS5Swapper.HUD', 'Corner', String(effectiveHudCorner));
+        await apply.writeTracked(manifest, gameDir, reshadeIni, iniText, { kind: 'config' });
+        await apply.enableAddonInIni(exeDir, zhAddonName, (code, params) => onLog({ code, params }), gameDir, manifest);
+      }
+      if (!manifest.route) manifest.route = hudStandalone ? 'hud' : 'native';
+      await apply.saveActiveManifest(gameDir, manifest);
+    });
+  }
+
   const updatedStatus = await inspectCombinedStatus(gameDir, {
     payloadDir: effectivePayloadDir,
     userDataDir,
@@ -1058,6 +1222,7 @@ module.exports = {
   detectHardwareEnvironment,
   estimateVramBudget,
   evaluateCoExecutionChecks,
+  inspectHudStatus,
   inspectCombinedStatus,
   applyCombinedConfiguration,
   inspectSinglePassTuning: singlePassTuning.inspectGameTuning,

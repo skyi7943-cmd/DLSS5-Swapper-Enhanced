@@ -1074,6 +1074,141 @@ test('v2.3.4 ANR 超省显存通用多帧生成（实验性）离线完整性、
   assert.equal(fs.existsSync(path.join(crackDir, 'winmm.dll')), false);
 });
 
+test('v2.3.5 游戏内帧率 · 显存用量 · 整体延迟监控小插件 ABI 校验、配置防覆盖与 32/64 位独立注入还原闭环', async (t) => {
+  const { writePe } = require('./fixtures/pe');
+  const ini = require('../src/core/feeder-config');
+  const backends = require('../src/core/backend-manager');
+
+  // 1. 源码级 COM/ImGui ABI 防崩审计 + 双架构二进制特征校验
+  const cppSrc = fs.readFileSync(path.join(ROOT, 'overlay', 'zh-cn-overlay.cpp'), 'utf8');
+  const cppCodeOnly = cppSrc.replace(/\/\/.*$/gm, '');
+  assert.equal(cppCodeOnly.includes('GetAdapterLuid'), false, '严禁调用按值返回 LUID 结构体的 ID3D12Device::GetAdapterLuid');
+  assert.equal(cppCodeOnly.includes('ImGuiWindowFlags_NoInputs'), true, '游戏内性能监控浮窗必须声明 NoInputs 防止拦截键鼠');
+  assert.equal(cppCodeOnly.includes('static_assert(sizeof(NvLatencyResultParams) == 15400'), true, 'Reflex 延迟结构体必须通过 15400 字节编译期断言');
+
+  for (const addonFile of ['dlss5-zh-cn.addon64', 'dlss5-zh-cn.addon32']) {
+    const bin = fs.readFileSync(path.join(PAYLOAD_DIR, 'enhanced', 'zh-cn', addonFile));
+    for (const marker of [
+      'DLSS5Swapper.HUD',
+      '##ENH_PerfMonitorHUD',
+      'nvapi_QueryInterface',
+      'CreateDXGIFactory1',
+      'In-game HUD monitor active',
+      'HUD monitor mode switched via F7'
+    ]) {
+      assert.equal(bin.includes(Buffer.from(marker)), true, `${addonFile} 必须内嵌监控引擎特征字符串: ${marker}`);
+    }
+  }
+
+  const scratchBase = fs.existsSync('E:\\Antigravity_Scratch') ? 'E:\\Antigravity_Scratch' : ROOT;
+  const game64Dir = fs.mkdtempSync(path.join(scratchBase, '.tmp-dlss5-v235-hud64-'));
+  const game32Dir = fs.mkdtempSync(path.join(scratchBase, '.tmp-dlss5-v235-hud32-'));
+  const comboHudDir = fs.mkdtempSync(path.join(scratchBase, '.tmp-dlss5-v235-combo-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-v235-userdata-'));
+  t.after(() => {
+    fs.rmSync(game64Dir, { recursive: true, force: true });
+    fs.rmSync(game32Dir, { recursive: true, force: true });
+    fs.rmSync(comboHudDir, { recursive: true, force: true });
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  });
+
+  // 2. 联合安装默认启用右上角精简监控条 (Mode=1, Corner=1)，且保护游戏内 F7 切换配置不被桌面重应用冲掉
+  writePe(path.join(comboHudDir, 'ActionHud64.exe'), { bitness: 64, text: 'D3D12CreateDevice', size: 160 * 1024 });
+  fs.writeFileSync(path.join(comboHudDir, 'nvngx_dlss.dll'), fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlss.dll')));
+
+  const initRes = await combinedManager.applyCombinedConfiguration(comboHudDir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(initRes.status.hud.installed, true);
+  assert.equal(initRes.status.hud.mode, 1, '首次部署应默认启用精简监控条 (Mode=1)');
+  assert.equal(initRes.status.hud.corner, 1, '首次部署应默认定位右上角 (Corner=1) 不遮挡 Home 菜单');
+
+  // 模拟玩家在游戏内按 F7 切到详细双行监控卡 (Mode=2) 并改到右下角 (Corner=3)
+  const comboIniPath = path.join(comboHudDir, 'ReShade.ini');
+  let comboIni = fs.readFileSync(comboIniPath, 'utf8');
+  comboIni = ini.setIni(comboIni, 'DLSS5Swapper.HUD', 'Mode', '2');
+  comboIni = ini.setIni(comboIni, 'DLSS5Swapper.HUD', 'Corner', '3');
+  fs.writeFileSync(comboIniPath, comboIni, 'utf8');
+
+  // 桌面端重新切换神经渲染模型（未显式传 hudMode/hudCorner）：必须 100% 保留游戏内 F7 设定！
+  const reapplyRes = await combinedManager.applyCombinedConfiguration(comboHudDir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.9.16-oct2026',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(reapplyRes.status.hud.mode, 2, '桌面重新应用模型时绝不能冲掉玩家游戏内 F7 切换的 Mode=2');
+  assert.equal(reapplyRes.status.hud.corner, 3, '桌面重新应用模型时绝不能冲掉玩家游戏内设置的 Corner=3');
+
+  // 桌面端显式修改 HUD 模式为关闭隐藏 (Mode=0, Corner=0)：应准确更新
+  const explicitRes = await combinedManager.applyCombinedConfiguration(comboHudDir, {
+    hardwareProfile: 'rtx40_laptop',
+    hudMode: 0,
+    hudCorner: 0,
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(explicitRes.status.hud.mode, 0);
+  assert.equal(explicitRes.status.hud.corner, 0);
+  assert.equal(await backends.restore(comboHudDir), true);
+
+  // 3. 64 位纯游戏（含外部学习补丁占用 dxgi.dll）单独挂载性能监控小插件 + 零残留卸载还原
+  writePe(path.join(game64Dir, 'PureGame64.exe'), { bitness: 64, text: 'D3D12CreateDevice', size: 160 * 1024 });
+  const foreignDxgi = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(256, 0x3c), Buffer.from('EXTERNAL_MOD_DXGI')]);
+  fs.writeFileSync(path.join(game64Dir, 'dxgi.dll'), foreignDxgi);
+
+  const hud64Res = await combinedManager.applyCombinedConfiguration(game64Dir, {
+    hudStandalone: true,
+    hudMode: 2,
+    hudCorner: 1,
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(hud64Res.ok, true);
+  assert.equal(hud64Res.status.hud.installed, true);
+  assert.equal(hud64Res.status.hud.mode, 2);
+  assert.deepEqual(fs.readFileSync(path.join(game64Dir, 'dxgi.dll')), foreignDxgi, '单独挂载监控插件不得覆盖外部 dxgi.dll');
+  assert.equal(fs.existsSync(path.join(game64Dir, 'd3d12.dll')), true, 'dxgi 被占用时监控宿主应自动避让至 d3d12.dll');
+  assert.equal(fs.existsSync(path.join(game64Dir, 'dlss5-zh-cn.addon64')), true);
+  assert.equal(fs.existsSync(path.join(game64Dir, 'renodx-dlss5.addon64')), false, '单独挂载监控插件不应捆绑注入 DLSS 5');
+
+  assert.equal(await backends.restore(game64Dir), true);
+  assert.deepEqual(
+    fs.readdirSync(game64Dir).filter((f) => f !== '_DLSS5_Backup').sort(),
+    ['PureGame64.exe', 'dxgi.dll'].sort(),
+    '一键还原后 64 位独立监控组件应零残留清除'
+  );
+
+  // 4. 32 位经典 D3D9 老游戏单独挂载性能监控小插件 (ReShade32 -> d3d9.dll + dlss5-zh-cn.addon32) + 零残留还原
+  writePe(path.join(game32Dir, 'ClassicDx9.exe'), { bitness: 32, text: 'Direct3DCreate9', size: 128 * 1024 });
+  const hud32Res = await combinedManager.applyCombinedConfiguration(game32Dir, {
+    hudStandalone: true,
+    hudMode: 1,
+    hudCorner: 2,
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(hud32Res.ok, true);
+  assert.equal(hud32Res.status.hud.installed, true);
+  assert.equal(hud32Res.status.hud.addonFile, 'dlss5-zh-cn.addon32');
+  assert.equal(hud32Res.status.hud.mode, 1);
+  assert.equal(hud32Res.status.hud.corner, 2);
+  assert.equal(fs.existsSync(path.join(game32Dir, 'd3d9.dll')), true);
+  assert.equal(fs.existsSync(path.join(game32Dir, 'dlss5-zh-cn.addon32')), true);
+
+  assert.equal(await backends.restore(game32Dir), true);
+  assert.deepEqual(
+    fs.readdirSync(game32Dir).filter((f) => f !== '_DLSS5_Backup').sort(),
+    ['ClassicDx9.exe'],
+    '一键还原后 32 位独立监控组件应零残留清除'
+  );
+});
+
 
 
 

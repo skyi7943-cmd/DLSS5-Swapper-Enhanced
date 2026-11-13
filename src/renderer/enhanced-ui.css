@@ -758,3 +758,112 @@
   white-space: pre-wrap;
   font-family: inherit;
 }
+
+/* v2.3.5 游戏内实时性能监控小插件（帧率 · 显存用量 · 整体延迟）控制栏 */
+.enh-hud-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--stroke);
+  border-left: 3px solid #22d3ee;
+}
+
+.enh-hud-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.enh-hud-head h5 {
+  margin: 0 0 2px 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.enh-hud-head span {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.enh-hud-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.enh-hud-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.enh-hud-mode-btn {
+  appearance: none;
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--stroke);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.enh-hud-mode-btn:hover:not(:disabled) {
+  border-color: #22d3ee;
+}
+
+.enh-hud-mode-btn.active {
+  background: rgba(34, 211, 238, 0.14);
+  border-color: #06b6d4;
+  color: #0e7490;
+}
+
+:root[data-theme="dark"] .enh-hud-mode-btn.active {
+  color: #67e8f9;
+}
+
+.enh-hud-corner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.enh-hud-corner select {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--stroke);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.enh-btn.hud-apply {
+  border-color: rgba(6, 182, 212, 0.5);
+  background: rgba(6, 182, 212, 0.12);
+  color: #0e7490;
+  font-weight: 700;
+  font-size: 12.5px;
+  padding: 7px 13px;
+}
+
+:root[data-theme="dark"] .enh-btn.hud-apply {
+  color: #67e8f9;
+}
+
+.enh-btn.hud-apply:hover:not(:disabled) {
+  background: #06b6d4;
+  color: #06181e;
+  border-color: #22d3ee;
+}

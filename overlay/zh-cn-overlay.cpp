@@ -9,6 +9,8 @@
 #include <imgui.h>
 #include <reshade.hpp>
 #include <windows.h>
+#include <dxgi1_4.h>
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -1106,6 +1108,720 @@ void apply_tuner_preset(int idx) {
     persist_tuner_to_disk();
 }
 
+// === 游戏内帧率 (FPS) · 显存用量 (VRAM) · 整体延迟 (Overall Latency) 实时性能监控小插件 ===
+// 兼容全系 64 位 / 32 位游戏、NVIDIA / AMD / Intel 显卡，零鼠标拦截、零逐帧堆分配、严格遵守 MinGW/MSVC ImGui ABI 安全规范。
+
+struct NvGpuMemoryInfoV2 {
+    uint32_t version;
+    uint32_t dedicatedVideoMemory;
+    uint32_t availableDedicatedVideoMemory;
+    uint32_t systemVideoMemory;
+    uint32_t sharedSystemMemory;
+    uint32_t curAvailableDedicatedVideoMemory;
+};
+
+#pragma pack(push, 8)
+struct NvLatencyResultParams {
+    uint32_t version;
+    struct FrameReport {
+        uint64_t frameID;
+        uint64_t inputSampleTime;
+        uint64_t simStartTime;
+        uint64_t simEndTime;
+        uint64_t renderSubmitStartTime;
+        uint64_t renderSubmitEndTime;
+        uint64_t presentStartTime;
+        uint64_t presentEndTime;
+        uint64_t driverStartTime;
+        uint64_t driverEndTime;
+        uint64_t osRenderQueueStartTime;
+        uint64_t osRenderQueueEndTime;
+        uint64_t gpuRenderStartTime;
+        uint64_t gpuRenderEndTime;
+        uint32_t gpuActiveRenderTimeUs;
+        uint32_t gpuFrameTimeUs;
+        uint8_t rsvd[120];
+    } frameReport[64];
+    uint8_t rsvd[32];
+};
+#pragma pack(pop)
+
+static_assert(sizeof(NvLatencyResultParams) == 15400, "NvLatencyResultParams must match NVAPI 15400-byte layout");
+
+using nvapi_query_fn = void *(__cdecl *)(uint32_t);
+using nvapi_init_fn = int(__cdecl *)();
+using nvapi_enum_gpus_fn = int(__cdecl *)(void *[64], uint32_t *);
+using nvapi_get_mem_fn = int(__cdecl *)(void *, NvGpuMemoryInfoV2 *);
+using nvapi_get_lat_fn = int(__cdecl *)(IUnknown *, NvLatencyResultParams *);
+using create_dxgi_factory1_fn = HRESULT(WINAPI *)(REFIID, void **);
+
+struct PerfHudState {
+    bool cfg_loaded = false;
+    bool hw_probed = false;
+    bool logged_active = false;
+    int mode = 1;   // 0: 关闭隐藏, 1: 精简监控条 (默认开启), 2: 详细监控卡
+    int corner = 1; // 0: 左上角, 1: 右上角 (默认不遮挡 Home 菜单), 2: 左下角, 3: 右下角
+
+    reshade::api::effect_runtime *active_runtime = nullptr;
+    ULONGLONG active_runtime_tick = 0;
+
+    int64_t qpc_freq = 0;
+    int64_t prev_qpc = 0;
+    int64_t qpc_history[8] = {};
+    uint32_t qpc_head = 0;
+
+    float dt_ring[120] = {};
+    int dt_count = 0;
+    int dt_head = 0;
+
+    ULONGLONG last_ui_tick = 0;
+    ULONGLONG last_vram_tick = 0;
+    ULONGLONG last_pipe_tick = 0;
+
+    uint32_t prev_dxgi_present_count = 0;
+    int64_t prev_dxgi_qpc = 0;
+    uint64_t prev_reflex_frame_id = 0;
+
+    void *nv_gpu = nullptr;
+    nvapi_get_mem_fn nv_get_mem = nullptr;
+    nvapi_get_lat_fn nv_get_lat = nullptr;
+    IDXGIAdapter3 *dxgi_adapter3 = nullptr;
+    float dxgi_dedicated_gb = 0.0f;
+
+    bool f7_was_down = false;
+    bool dlss5_active = false;
+    bool anr_active = false;
+    bool mfg_active = false;
+
+    int disp_fps = 0;
+    int disp_low1_fps = 0;
+    float disp_frame_ms = 0.0f;
+    float vram_used_gb = 0.0f;
+    float vram_total_gb = 0.0f;
+    float vram_game_gb = 0.0f;
+    int vram_pct = 0;
+    float latency_ms = 0.0f;
+    int latency_src = 2; // 0: Reflex, 1: DXGI, 2: 管线
+
+    char fps_text[96] = "FPS --";
+    char vram_text[96] = "\xe6\x98\xbe\xe5\xad\x98 -- / -- GB";
+    char lat_text[96] = "\xe6\x95\xb4\xe4\xbd\x93\xe5\xbb\xb6\xe8\xbf\x9f -- ms";
+    char detail_text[224] = {};
+};
+
+PerfHudState g_hud = {};
+NvLatencyResultParams g_nv_lat_buf = {};
+
+void save_hud_config() {
+    char buf[16] = {};
+    snprintf(buf, sizeof(buf), "%d", g_hud.mode);
+    reshade::set_config_value(nullptr, "DLSS5Swapper.HUD", "Mode", static_cast<const char *>(buf));
+    snprintf(buf, sizeof(buf), "%d", g_hud.corner);
+    reshade::set_config_value(nullptr, "DLSS5Swapper.HUD", "Corner", static_cast<const char *>(buf));
+    if (g_hud.mode > 0) {
+        reshade::set_config_value(nullptr, "OVERLAY", "ShowFPS", "0");
+        reshade::set_config_value(nullptr, "OVERLAY", "ShowFrameTime", "0");
+    }
+}
+
+void load_hud_config() {
+    if (g_hud.cfg_loaded) return;
+    g_hud.cfg_loaded = true;
+
+    init_singlepass_tuner();
+    int m = g_hud.mode;
+    int c = g_hud.corner;
+    bool got_m = reshade::get_config_value(nullptr, "DLSS5Swapper.HUD", "Mode", m);
+    bool got_c = reshade::get_config_value(nullptr, "DLSS5Swapper.HUD", "Corner", c);
+    if (!got_m || !got_c) {
+        const std::wstring local_ini = g_exe_dir_w + L"\\ReShade.ini";
+        std::string ini = read_utf8_file_w(local_ini);
+        float fv = 0.0f;
+        if (!got_m && parse_float_safe(ini_get_str(ini, "DLSS5Swapper.HUD", "Mode"), &fv)) {
+            m = static_cast<int>(std::lround(fv));
+        }
+        if (!got_c && parse_float_safe(ini_get_str(ini, "DLSS5Swapper.HUD", "Corner"), &fv)) {
+            c = static_cast<int>(std::lround(fv));
+        }
+    }
+    if (m < 0 || m > 2) m = 1;
+    if (c < 0 || c > 3) c = 1;
+    g_hud.mode = m;
+    g_hud.corner = c;
+    if (g_hud.mode > 0) {
+        reshade::set_config_value(nullptr, "OVERLAY", "ShowFPS", "0");
+        reshade::set_config_value(nullptr, "OVERLAY", "ShowFrameTime", "0");
+    }
+}
+
+void ensure_hud_hw_interfaces() {
+    if (g_hud.hw_probed) return;
+    g_hud.hw_probed = true;
+
+    LARGE_INTEGER freq = {};
+    if (QueryPerformanceFrequency(&freq) && freq.QuadPart > 0) {
+        g_hud.qpc_freq = freq.QuadPart;
+    }
+
+    wchar_t sys_dir[MAX_PATH] = {};
+    const UINT sys_len = GetSystemDirectoryW(sys_dir, MAX_PATH);
+    if (sys_len == 0 || sys_len >= MAX_PATH - 32) return;
+
+    // 1. 从系统目录加载正版 NVIDIA NVAPI（避免游戏目录中第三方伪装 nvapi 干扰 AMD/Intel 显存读数）
+    std::wstring nv_path(sys_dir);
+#ifdef _WIN64
+    nv_path += L"\\nvapi64.dll";
+#else
+    nv_path += L"\\nvapi.dll";
+#endif
+    HMODULE nv_mod = GetModuleHandleW(nv_path.c_str());
+    if (!nv_mod && file_exists_w(nv_path)) {
+        nv_mod = LoadLibraryW(nv_path.c_str());
+    }
+    if (nv_mod) {
+        auto query = reinterpret_cast<nvapi_query_fn>(GetProcAddress(nv_mod, "nvapi_QueryInterface"));
+        if (query) {
+            auto nv_init = reinterpret_cast<nvapi_init_fn>(query(0x0150E828u));
+            auto nv_enum = reinterpret_cast<nvapi_enum_gpus_fn>(query(0xE5AC921Fu));
+            auto nv_mem = reinterpret_cast<nvapi_get_mem_fn>(query(0x07F9B368u));
+            auto nv_lat = reinterpret_cast<nvapi_get_lat_fn>(query(0x1A587F9Cu));
+            if (nv_init && nv_init() == 0) {
+                g_hud.nv_get_lat = nv_lat;
+                if (nv_enum && nv_mem) {
+                    void *handles[64] = {};
+                    uint32_t count = 0;
+                    if (nv_enum(handles, &count) == 0 && count > 0) {
+                        uint32_t best_kib = 0;
+                        void *best_gpu = handles[0];
+                        for (uint32_t i = 0; i < count && i < 8; ++i) {
+                            NvGpuMemoryInfoV2 mi = {};
+                            mi.version = static_cast<uint32_t>(sizeof(mi) | (2u << 16));
+                            if (nv_mem(handles[i], &mi) == 0 && mi.dedicatedVideoMemory > best_kib) {
+                                best_kib = mi.dedicatedVideoMemory;
+                                best_gpu = handles[i];
+                            }
+                        }
+                        g_hud.nv_gpu = best_gpu;
+                        g_hud.nv_get_mem = nv_mem;
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. 从 System32 加载系统原生 dxgi.dll（严禁直接 LoadLibraryW("dxgi.dll") 以免重入游戏目录代理 DLL）
+    std::wstring dxgi_path(sys_dir);
+    dxgi_path += L"\\dxgi.dll";
+    HMODULE dxgi_mod = GetModuleHandleW(dxgi_path.c_str());
+    if (!dxgi_mod) {
+        dxgi_mod = LoadLibraryW(dxgi_path.c_str());
+    }
+    if (dxgi_mod) {
+        auto create_fac = reinterpret_cast<create_dxgi_factory1_fn>(GetProcAddress(dxgi_mod, "CreateDXGIFactory1"));
+        if (create_fac) {
+            IDXGIFactory1 *fac = nullptr;
+            if (SUCCEEDED(create_fac(__uuidof(IDXGIFactory1), reinterpret_cast<void **>(&fac))) && fac) {
+                SIZE_T best_vram = 0;
+                IDXGIAdapter1 *best_adp = nullptr;
+                for (UINT i = 0; i < 8; ++i) {
+                    IDXGIAdapter1 *adp = nullptr;
+                    if (fac->EnumAdapters1(i, &adp) == DXGI_ERROR_NOT_FOUND || !adp) break;
+                    DXGI_ADAPTER_DESC1 desc = {};
+                    if (SUCCEEDED(adp->GetDesc1(&desc)) && (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
+                        if (desc.DedicatedVideoMemory >= best_vram) {
+                            if (best_adp) best_adp->Release();
+                            best_vram = desc.DedicatedVideoMemory;
+                            best_adp = adp;
+                            adp = nullptr;
+                        }
+                    }
+                    if (adp) adp->Release();
+                }
+                if (best_adp) {
+                    g_hud.dxgi_dedicated_gb = static_cast<float>(best_vram) / (1024.0f * 1024.0f * 1024.0f);
+                    best_adp->QueryInterface(__uuidof(IDXGIAdapter3), reinterpret_cast<void **>(&g_hud.dxgi_adapter3));
+                    best_adp->Release();
+                }
+                fac->Release();
+            }
+        }
+    }
+}
+
+void cleanup_perf_hud() {
+    if (g_hud.dxgi_adapter3) {
+        g_hud.dxgi_adapter3->Release();
+        g_hud.dxgi_adapter3 = nullptr;
+    }
+    g_hud.hw_probed = false;
+    g_hud.active_runtime = nullptr;
+}
+
+void on_destroy_effect_runtime(reshade::api::effect_runtime *runtime) {
+    if (g_hud.active_runtime == runtime) {
+        g_hud.active_runtime = nullptr;
+        g_hud.prev_qpc = 0;
+    }
+}
+
+void poll_hud_vram(ULONGLONG now_tick) {
+    if (now_tick - g_hud.last_vram_tick < 500 && g_hud.vram_total_gb > 0.1f) return;
+    g_hud.last_vram_tick = now_tick;
+
+    float proc_gb = 0.0f;
+    float budget_gb = 0.0f;
+    if (g_hud.dxgi_adapter3) {
+        DXGI_QUERY_VIDEO_MEMORY_INFO vmi = {};
+        if (SUCCEEDED(g_hud.dxgi_adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &vmi))) {
+            proc_gb = static_cast<float>(vmi.CurrentUsage) / (1024.0f * 1024.0f * 1024.0f);
+            budget_gb = static_cast<float>(vmi.Budget) / (1024.0f * 1024.0f * 1024.0f);
+        }
+    }
+    g_hud.vram_game_gb = proc_gb;
+
+    bool used_nvapi = false;
+    if (g_hud.nv_gpu && g_hud.nv_get_mem) {
+        NvGpuMemoryInfoV2 mi = {};
+        mi.version = static_cast<uint32_t>(sizeof(mi) | (2u << 16));
+        if (g_hud.nv_get_mem(g_hud.nv_gpu, &mi) == 0 && mi.dedicatedVideoMemory > 0 &&
+            mi.curAvailableDedicatedVideoMemory <= mi.dedicatedVideoMemory) {
+            g_hud.vram_total_gb = static_cast<float>(mi.dedicatedVideoMemory) / (1024.0f * 1024.0f);
+            g_hud.vram_used_gb = static_cast<float>(mi.dedicatedVideoMemory - mi.curAvailableDedicatedVideoMemory) / (1024.0f * 1024.0f);
+            used_nvapi = true;
+        }
+    }
+    if (!used_nvapi) {
+        g_hud.vram_total_gb = g_hud.dxgi_dedicated_gb > 0.25f ? g_hud.dxgi_dedicated_gb : (budget_gb > 0.25f ? budget_gb : 8.0f);
+        g_hud.vram_used_gb = proc_gb;
+    }
+    if (g_hud.vram_total_gb > 0.1f) {
+        int pct = static_cast<int>(std::lround((g_hud.vram_used_gb / g_hud.vram_total_gb) * 100.0f));
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        g_hud.vram_pct = pct;
+    }
+}
+
+void poll_hud_pipeline_flags(ULONGLONG now_tick) {
+    if (now_tick - g_hud.last_pipe_tick < 1500) return;
+    g_hud.last_pipe_tick = now_tick;
+
+#ifdef _WIN64
+    g_hud.dlss5_active =
+        GetModuleHandleW(L"renodx-dlss5.addon64") != nullptr ||
+        GetModuleHandleW(L"renodx-dlss.addon64") != nullptr ||
+        GetModuleHandleW(L"dlss5-feed.addon64") != nullptr;
+    g_hud.mfg_active =
+        GetModuleHandleW(L"renodx-mfgunlock.addon64") != nullptr ||
+        GetModuleHandleW(L"MFGUnlocker.asi") != nullptr;
+    g_hud.anr_active = false;
+    if (HMODULE dlssg_mod = GetModuleHandleW(L"nvngx_dlssg.dll")) {
+        wchar_t mod_path[MAX_PATH] = {};
+        if (GetModuleFileNameW(dlssg_mod, mod_path, MAX_PATH)) {
+            _wcslwr_s(mod_path, MAX_PATH);
+            if (wcsstr(mod_path, L"apex neural rendering")) {
+                g_hud.anr_active = true;
+            }
+        }
+    }
+    if (!g_hud.anr_active && !g_exe_dir_w.empty()) {
+        if (file_exists_w(g_exe_dir_w + L"\\OptiScaler\\custom\\Apex Neural Rendering FG\\dlssg\\nvngx_dlssg.dll")) {
+            g_hud.anr_active = true;
+        }
+    }
+#else
+    g_hud.dlss5_active = GetModuleHandleW(L"dlss5-feed.addon32") != nullptr;
+    g_hud.mfg_active = false;
+    g_hud.anr_active = false;
+#endif
+}
+
+void update_and_draw_perf_hud(reshade::api::effect_runtime *runtime) {
+    init_singlepass_tuner();
+    if (g_tuner.is_host64 || !runtime) return;
+
+    const imgui_function_table *tbl = g_table_hooked ? &g_orig : imgui_function_table_instance();
+    if (!tbl) return;
+
+    const ImGuiIO &io = tbl->GetIO();
+    const float disp_x = io.DisplaySize.x;
+    const float disp_y = io.DisplaySize.y;
+    if (disp_x < 320.0f || disp_y < 200.0f) return;
+
+    load_hud_config();
+
+    const ULONGLONG now_tick = GetTickCount64();
+    if (g_hud.active_runtime != runtime) {
+        if (g_hud.active_runtime == nullptr || (now_tick - g_hud.active_runtime_tick) > 1000) {
+            g_hud.active_runtime = runtime;
+            g_hud.prev_qpc = 0;
+        } else {
+            return;
+        }
+    }
+    g_hud.active_runtime_tick = now_tick;
+
+    // F7 快捷键边缘触发（仅当前游戏进程拥有前台焦点时响应，循环：精简监控条 -> 详细监控卡 -> 关闭隐藏）
+    const bool f7_down = (GetAsyncKeyState(VK_F7) & 0x8000) != 0;
+        if (f7_down && !g_hud.f7_was_down) {
+        HWND fg = GetForegroundWindow();
+        DWORD fg_pid = 0;
+        if (fg && GetWindowThreadProcessId(fg, &fg_pid) && fg_pid == GetCurrentProcessId()) {
+            if (g_hud.mode == 1) g_hud.mode = 2;
+            else if (g_hud.mode == 2) g_hud.mode = 0;
+            else g_hud.mode = 1;
+            g_hud.last_ui_tick = 0;
+            save_hud_config();
+            char f7_log[128] = {};
+            snprintf(
+                f7_log,
+                sizeof(f7_log),
+                "DLSS 5 Swapper Enhanced: HUD monitor mode switched via F7 (mode=%d, corner=%d).",
+                g_hud.mode,
+                g_hud.corner);
+            reshade::log::message(reshade::log::level::info, f7_log);
+        }
+    }
+    g_hud.f7_was_down = f7_down;
+
+    if (g_hud.mode <= 0) return;
+
+    ensure_hud_hw_interfaces();
+    if (g_hud.qpc_freq <= 0) return;
+
+    // 逐帧高精度 QPC 采样（零堆分配、零 COM 调用）
+    LARGE_INTEGER now_li = {};
+    QueryPerformanceCounter(&now_li);
+    const int64_t now_qpc = now_li.QuadPart;
+    g_hud.qpc_history[g_hud.qpc_head & 7u] = now_qpc;
+    ++g_hud.qpc_head;
+
+    if (g_hud.prev_qpc > 0 && now_qpc > g_hud.prev_qpc) {
+        const float dt_ms = static_cast<float>(static_cast<double>(now_qpc - g_hud.prev_qpc) * 1000.0 / static_cast<double>(g_hud.qpc_freq));
+        if (dt_ms >= 0.15f && dt_ms <= 500.0f) {
+            g_hud.dt_ring[g_hud.dt_head] = dt_ms;
+            g_hud.dt_head = (g_hud.dt_head + 1) % 120;
+            if (g_hud.dt_count < 120) ++g_hud.dt_count;
+        }
+    }
+    g_hud.prev_qpc = now_qpc;
+
+    // 每 300ms 更新一次统计数值、延迟采样与字符串缓冲，确保数字清晰稳定不闪烁
+    if (now_tick - g_hud.last_ui_tick >= 300 || g_hud.disp_fps == 0) {
+        g_hud.last_ui_tick = now_tick;
+        poll_hud_vram(now_tick);
+        poll_hud_pipeline_flags(now_tick);
+
+        // 1. 计算平均帧率与 1% Low 帧率
+        float avg_dt_ms = 16.67f;
+        float low1_dt_ms = 16.67f;
+        if (g_hud.dt_count > 0) {
+            float sorted_dt[120];
+            float sum_dt = 0.0f;
+            for (int i = 0; i < g_hud.dt_count; ++i) {
+                sorted_dt[i] = g_hud.dt_ring[i];
+                sum_dt += sorted_dt[i];
+            }
+            avg_dt_ms = sum_dt / static_cast<float>(g_hud.dt_count);
+            std::sort(sorted_dt, sorted_dt + g_hud.dt_count);
+            int tail_n = g_hud.dt_count / 20;
+            if (tail_n < 1) tail_n = 1;
+            float tail_sum = 0.0f;
+            for (int i = g_hud.dt_count - tail_n; i < g_hud.dt_count; ++i) {
+                tail_sum += sorted_dt[i];
+            }
+            low1_dt_ms = tail_sum / static_cast<float>(tail_n);
+        }
+
+        float overlay_fps = avg_dt_ms > 0.1f ? (1000.0f / avg_dt_ms) : 0.0f;
+        float dxgi_fps = 0.0f;
+        float dxgi_queue_ms = -1.0f;
+
+        // 2. 瞬态查询 DXGI SwapChain 帧统计（不跨帧持有引用，100% 兼容全屏切换与分辨率变更）
+        reshade::api::device *dev = runtime->get_device();
+        const reshade::api::device_api api = dev ? dev->get_api() : reshade::api::device_api::d3d12;
+        if (api == reshade::api::device_api::d3d10 ||
+            api == reshade::api::device_api::d3d11 ||
+            api == reshade::api::device_api::d3d12) {
+            auto *sc_unk = reinterpret_cast<IUnknown *>(static_cast<uintptr_t>(runtime->get_native()));
+            IDXGISwapChain *sc = nullptr;
+            if (sc_unk && SUCCEEDED(sc_unk->QueryInterface(__uuidof(IDXGISwapChain), reinterpret_cast<void **>(&sc))) && sc) {
+                UINT last_id = 0;
+                DXGI_FRAME_STATISTICS stats = {};
+                const bool ok_last = SUCCEEDED(sc->GetLastPresentCount(&last_id));
+                const bool ok_stat = SUCCEEDED(sc->GetFrameStatistics(&stats));
+                sc->Release();
+
+                if (ok_stat && stats.PresentCount > 0) {
+                    if (g_hud.prev_dxgi_present_count > 0 &&
+                        stats.PresentCount > g_hud.prev_dxgi_present_count &&
+                        now_qpc > g_hud.prev_dxgi_qpc) {
+                        const double elapsed_s = static_cast<double>(now_qpc - g_hud.prev_dxgi_qpc) / static_cast<double>(g_hud.qpc_freq);
+                        if (elapsed_s >= 0.10 && elapsed_s <= 3.0) {
+                            dxgi_fps = static_cast<float>(static_cast<double>(stats.PresentCount - g_hud.prev_dxgi_present_count) / elapsed_s);
+                        }
+                    }
+                    if (ok_last && last_id >= stats.PresentCount && (last_id - stats.PresentCount) <= 5 &&
+                        stats.SyncQPCTime.QuadPart > 0 && g_hud.qpc_head >= 2) {
+                        const uint32_t lag = last_id - stats.PresentCount;
+                        if (lag + 1 <= g_hud.qpc_head) {
+                            const int64_t sub_qpc = g_hud.qpc_history[(g_hud.qpc_head - 1u - lag) & 7u];
+                            if (sub_qpc > 0 && stats.SyncQPCTime.QuadPart >= sub_qpc) {
+                                const float q_ms = static_cast<float>(static_cast<double>(stats.SyncQPCTime.QuadPart - sub_qpc) * 1000.0 / static_cast<double>(g_hud.qpc_freq));
+                                if (q_ms >= 0.05f && q_ms <= 180.0f && stats.PresentCount != g_hud.prev_dxgi_present_count) {
+                                    dxgi_queue_ms = q_ms;
+                                }
+                            }
+                        }
+                    }
+                    g_hud.prev_dxgi_present_count = stats.PresentCount;
+                    g_hud.prev_dxgi_qpc = now_qpc;
+                }
+            }
+        }
+
+        float final_fps = overlay_fps;
+        float fps_scale = 1.0f;
+        if (dxgi_fps > overlay_fps * 1.35f && dxgi_fps < 1000.0f && overlay_fps > 1.0f) {
+            final_fps = dxgi_fps;
+            fps_scale = dxgi_fps / overlay_fps;
+        }
+        g_hud.disp_fps = static_cast<int>(std::lround(final_fps));
+        g_hud.disp_frame_ms = final_fps > 0.1f ? (1000.0f / final_fps) : avg_dt_ms;
+        const float scaled_low1 = (low1_dt_ms > 0.1f ? (1000.0f / low1_dt_ms) : final_fps) * fps_scale;
+        g_hud.disp_low1_fps = static_cast<int>(std::lround(scaled_low1 > final_fps ? final_fps : scaled_low1));
+
+        // 3. 三级精度整体延迟采样：Tier 1 (NVAPI Reflex 硬件级) -> Tier 2 (DXGI 扫描队列) -> Tier 3 (渲染管线模型)
+        float raw_lat_ms = -1.0f;
+        int lat_src = 2;
+
+        if (g_hud.nv_get_lat && dev &&
+            (api == reshade::api::device_api::d3d11 || api == reshade::api::device_api::d3d12)) {
+            auto *dev_unk = reinterpret_cast<IUnknown *>(static_cast<uintptr_t>(dev->get_native()));
+            if (dev_unk) {
+                memset(&g_nv_lat_buf, 0, sizeof(g_nv_lat_buf));
+                g_nv_lat_buf.version = static_cast<uint32_t>(sizeof(g_nv_lat_buf) | (1u << 16));
+                if (g_hud.nv_get_lat(dev_unk, &g_nv_lat_buf) == 0) {
+                    uint64_t max_fid = 0;
+                    int best_idx = -1;
+                    for (int i = 0; i < 64; ++i) {
+                        if (g_nv_lat_buf.frameReport[i].frameID > max_fid &&
+                            g_nv_lat_buf.frameReport[i].gpuRenderEndTime > 0) {
+                            max_fid = g_nv_lat_buf.frameReport[i].frameID;
+                            best_idx = i;
+                        }
+                    }
+                    if (best_idx >= 0 && max_fid > g_hud.prev_reflex_frame_id) {
+                        g_hud.prev_reflex_frame_id = max_fid;
+                        const auto &rep = g_nv_lat_buf.frameReport[best_idx];
+                        uint64_t start_t = rep.inputSampleTime > 0 ? rep.inputSampleTime : rep.simStartTime;
+                        if (start_t > 0 && rep.gpuRenderEndTime > start_t) {
+                            const uint64_t diff_us = rep.gpuRenderEndTime - start_t;
+                            if (diff_us >= 500ULL && diff_us <= 300000ULL) {
+                                raw_lat_ms = static_cast<float>(diff_us) / 1000.0f;
+                                lat_src = 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (raw_lat_ms < 0.0f && dxgi_queue_ms >= 0.0f) {
+            raw_lat_ms = g_hud.disp_frame_ms + dxgi_queue_ms;
+            lat_src = 1;
+        }
+        if (raw_lat_ms < 0.0f) {
+            const float queue_factor = (g_hud.anr_active || g_hud.mfg_active) ? 2.15f : 1.65f;
+            raw_lat_ms = g_hud.disp_frame_ms * queue_factor;
+            lat_src = 2;
+        }
+        if (raw_lat_ms < 1.0f) raw_lat_ms = 1.0f;
+        if (raw_lat_ms > 250.0f) raw_lat_ms = 250.0f;
+
+        g_hud.latency_ms = (g_hud.latency_ms <= 0.01f)
+            ? raw_lat_ms
+            : (g_hud.latency_ms * 0.65f + raw_lat_ms * 0.35f);
+        g_hud.latency_src = lat_src;
+
+        // 4. 格式化输出文本缓冲
+        if (g_hud.mode == 2) {
+            snprintf(
+                g_hud.fps_text,
+                sizeof(g_hud.fps_text),
+                "FPS %d (%.1f ms \xc2\xb7 1%%L %d)",
+                g_hud.disp_fps,
+                g_hud.disp_frame_ms,
+                g_hud.disp_low1_fps);
+        } else {
+            snprintf(
+                g_hud.fps_text,
+                sizeof(g_hud.fps_text),
+                "FPS %d (1%%L %d)",
+                g_hud.disp_fps,
+                g_hud.disp_low1_fps);
+        }
+        snprintf(
+            g_hud.vram_text,
+            sizeof(g_hud.vram_text),
+            "\xe6\x98\xbe\xe5\xad\x98 %.2f / %.1f GB (%d%%)",
+            g_hud.vram_used_gb,
+            g_hud.vram_total_gb,
+            g_hud.vram_pct);
+        snprintf(
+            g_hud.lat_text,
+            sizeof(g_hud.lat_text),
+            "\xe6\x95\xb4\xe4\xbd\x93\xe5\xbb\xb6\xe8\xbf\x9f %.1f ms",
+            g_hud.latency_ms);
+
+        if (g_hud.mode == 2) {
+            const char *pipe_label = "\xe5\xae\x9e\xe6\x97\xb6\xe6\x80\xa7\xe8\x83\xbd\xe7\x9b\x91\xe6\x8e\xa7";
+            if (g_hud.dlss5_active && g_hud.anr_active) pipe_label = "DLSS 5 + ANR\xe8\xa1\xa5\xe5\xb8\xa7";
+            else if (g_hud.dlss5_active && g_hud.mfg_active) pipe_label = "DLSS 5 + \xe5\x8e\x9f\xe7\x94\x9fMFG";
+            else if (g_hud.dlss5_active) pipe_label = "DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93";
+            else if (g_hud.anr_active) pipe_label = "ANR \xe7\x9c\x81\xe6\x98\xbe\xe5\xad\x98\xe8\xa1\xa5\xe5\xb8\xa7";
+            else if (g_hud.mfg_active) pipe_label = "NVIDIA MFG\xe8\xa1\xa5\xe5\xb8\xa7";
+
+            const char *src_label = (g_hud.latency_src == 0)
+                ? "Reflex\xe7\xa1\xac\xe4\xbb\xb6"
+                : (g_hud.latency_src == 1 ? "DXGI\xe9\x98\x9f\xe5\x88\x97" : "\xe6\xb8\xb2\xe6\x9f\x93\xe7\xae\xa1\xe7\xba\xbf");
+
+            snprintf(
+                g_hud.detail_text,
+                sizeof(g_hud.detail_text),
+                "[%s]  \xe6\xb8\xb8\xe6\x88\x8f\xe6\x98\xbe\xe5\xad\x98 %.2f GB  |  \xe5\xbb\xb6\xe8\xbf\x9f\xe6\xba\x90: %s  |  F7 \xe5\x88\x87\xe6\x8d\xa2/\xe9\x9a\x90\xe8\x97\x8f",
+                pipe_label,
+                g_hud.vram_game_gb,
+                src_label);
+        }
+
+        if (!g_hud.logged_active && g_hud.dt_count >= 12 && g_hud.disp_fps > 0) {
+            g_hud.logged_active = true;
+            char log_buf[256] = {};
+            snprintf(
+                log_buf,
+                sizeof(log_buf),
+                "DLSS 5 Swapper Enhanced: In-game HUD monitor active (FPS=%d, VRAM=%.2f/%.1f GB, Latency=%.1f ms [src=%d]).",
+                g_hud.disp_fps,
+                g_hud.vram_used_gb,
+                g_hud.vram_total_gb,
+                g_hud.latency_ms,
+                g_hud.latency_src);
+            reshade::log::message(reshade::log::level::info, log_buf);
+        }
+    }
+
+    // 5. 纯标量/常引用 ABI 安全绘制半透明毛玻璃监控浮窗（NoInputs 绝不拦截游戏鼠标键盘）
+    const float margin = 14.0f;
+    float pos_x = disp_x - margin;
+    float pos_y = margin;
+    float piv_x = 1.0f;
+    float piv_y = 0.0f;
+    if (g_hud.corner == 0) {
+        pos_x = margin; pos_y = margin; piv_x = 0.0f; piv_y = 0.0f;
+    } else if (g_hud.corner == 2) {
+        pos_x = margin; pos_y = disp_y - margin; piv_x = 0.0f; piv_y = 1.0f;
+    } else if (g_hud.corner == 3) {
+        pos_x = disp_x - margin; pos_y = disp_y - margin; piv_x = 1.0f; piv_y = 1.0f;
+    }
+
+    const ImVec2 win_pos(pos_x, pos_y);
+    const ImVec2 win_pivot(piv_x, piv_y);
+    const ImVec2 win_pad(11.0f, 6.0f);
+    tbl->SetNextWindowPos(win_pos, ImGuiCond_Always, win_pivot);
+    tbl->SetNextWindowBgAlpha(0.74f);
+    tbl->PushStyleVar(ImGuiStyleVar_WindowRounding, 7.0f);
+    tbl->PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    tbl->PushStyleVar2(ImGuiStyleVar_WindowPadding, win_pad);
+    tbl->PushStyleColor2(ImGuiCol_WindowBg, ImVec4(0.06f, 0.08f, 0.11f, 0.84f));
+    tbl->PushStyleColor2(ImGuiCol_Border, ImVec4(0.35f, 0.82f, 0.30f, 0.45f));
+
+    const ImGuiWindowFlags hud_flags =
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_AlwaysAutoResize |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoInputs;
+
+    if (tbl->Begin("##ENH_PerfMonitorHUD", nullptr, hud_flags)) {
+        const ImVec4 fps_col = g_hud.disp_fps >= 60
+            ? ImVec4(0.46f, 0.96f, 0.36f, 1.0f)
+            : (g_hud.disp_fps >= 35 ? ImVec4(0.98f, 0.82f, 0.28f, 1.0f) : ImVec4(0.98f, 0.42f, 0.38f, 1.0f));
+        const ImVec4 vram_col = g_hud.vram_pct <= 78
+            ? ImVec4(0.38f, 0.88f, 0.98f, 1.0f)
+            : (g_hud.vram_pct <= 90 ? ImVec4(0.98f, 0.80f, 0.28f, 1.0f) : ImVec4(0.98f, 0.40f, 0.36f, 1.0f));
+        const ImVec4 lat_col = g_hud.latency_ms <= 26.0f
+            ? ImVec4(0.52f, 0.95f, 0.56f, 1.0f)
+            : (g_hud.latency_ms <= 48.0f ? ImVec4(0.98f, 0.82f, 0.30f, 1.0f) : ImVec4(0.98f, 0.44f, 0.38f, 1.0f));
+        const ImVec4 sep_col(0.52f, 0.58f, 0.66f, 0.85f);
+
+        call_text_colored_v(tbl->TextColoredV, fps_col, "%s", g_hud.fps_text);
+        tbl->SameLine(0.0f, 7.0f);
+        call_text_colored_v(tbl->TextColoredV, sep_col, "%s", "|");
+        tbl->SameLine(0.0f, 7.0f);
+        call_text_colored_v(tbl->TextColoredV, vram_col, "%s", g_hud.vram_text);
+        tbl->SameLine(0.0f, 7.0f);
+        call_text_colored_v(tbl->TextColoredV, sep_col, "%s", "|");
+        tbl->SameLine(0.0f, 7.0f);
+        call_text_colored_v(tbl->TextColoredV, lat_col, "%s", g_hud.lat_text);
+
+        if (g_hud.mode == 2 && g_hud.detail_text[0] != '\0') {
+            call_text_colored_v(tbl->TextColoredV, ImVec4(0.76f, 0.82f, 0.88f, 0.92f), "%s", g_hud.detail_text);
+        }
+    }
+    tbl->End();
+
+    tbl->PopStyleColor(2);
+    tbl->PopStyleVar(3);
+}
+
+void draw_hud_control_section(const imgui_function_table *tbl) {
+    load_hud_config();
+    call_text_colored_v(
+        tbl->TextColoredV,
+        ImVec4(0.38f, 0.88f, 0.98f, 1.0f),
+        "%s",
+        "\xe2\x97\x8f \xe6\xb8\xb8\xe6\x88\x8f\xe5\x86\x85\xe5\xae\x9e\xe6\x97\xb6\xe7\x9b\x91\xe6\x8e\xa7\xe5\xb0\x8f\xe6\x8f\x92\xe4\xbb\xb6 (\xe5\xb8\xa7\xe7\x8e\x87 \xc2\xb7 \xe6\x98\xbe\xe5\xad\x98 \xc2\xb7 \xe6\x95\xb4\xe4\xbd\x93\xe5\xbb\xb6\xe8\xbf\x9f | \xe5\xbf\xab\xe6\x8d\xb7\xe9\x94\xae F7)");
+
+    const ImGuiStyle &style = tbl->GetStyle();
+    const float avail_w = tbl->GetWindowWidth() - tbl->GetCursorPosX() - style.WindowPadding.x;
+    const float third_w = avail_w > 240.0f ? (avail_w - style.ItemSpacing.x * 2.0f) / 3.0f : 0.0f;
+
+    auto draw_mode_btn = [&](int mode_val, const char *label) {
+        const bool active = (g_hud.mode == mode_val);
+        if (active) {
+            tbl->PushStyleColor2(ImGuiCol_Button, ImVec4(0.16f, 0.50f, 0.68f, 0.95f));
+            tbl->PushStyleColor2(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.60f, 0.80f, 0.98f));
+        }
+        if (tbl->Button(label, ImVec2(third_w, 0.0f))) {
+            g_hud.mode = mode_val;
+            save_hud_config();
+        }
+        if (active) {
+            tbl->PopStyleColor(2);
+        }
+    };
+
+    draw_mode_btn(0, "\xe5\x85\xb3\xe9\x97\xad\xe9\x9a\x90\xe8\x97\x8f###enh_hud_m0");
+    if (third_w > 0.0f) tbl->SameLine(0.0f, -1.0f);
+    draw_mode_btn(1, "\xe7\xb2\xbe\xe7\xae\x80\xe7\x9b\x91\xe6\x8e\xa7\xe6\x9d\xa1###enh_hud_m1");
+    if (third_w > 0.0f) tbl->SameLine(0.0f, -1.0f);
+    draw_mode_btn(2, "\xe8\xaf\xa6\xe7\xbb\x86\xe7\x9b\x91\xe6\x8e\xa7\xe5\x8d\xa1###enh_hud_m2");
+
+    static const char *kHudCorners[] = {
+        "\xe5\xb7\xa6\xe4\xb8\x8a\xe8\xa7\x92 (Top-Left)",
+        "\xe5\x8f\xb3\xe4\xb8\x8a\xe8\xa7\x92 (Top-Right \xc2\xb7 \xe6\x8e\xa8\xe8\x8d\x90\xe4\xb8\x8d\xe6\x8c\xa1\xe8\x8f\x9c\xe5\x8d\x95)",
+        "\xe5\xb7\xa6\xe4\xb8\x8b\xe8\xa7\x92 (Bottom-Left)",
+        "\xe5\x8f\xb3\xe4\xb8\x8b\xe8\xa7\x92 (Bottom-Right)"
+    };
+    if (tbl->Combo("\xe7\x9b\x91\xe6\x8e\xa7\xe6\x98\xbe\xe7\xa4\xba\xe4\xbd\x8d\xe7\xbd\xae###enh_hud_pos", &g_hud.corner, kHudCorners, 4, -1)) {
+        save_hud_config();
+    }
+}
+
 // 注意：跨 MinGW(x86_64-windows-gnu) 与 MSVC(ReShade64.dll) 调用 ImGui 函数表时，
 // 严禁调用任何按值返回 ImVec2 / ImVec4 (带构造函数非聚合体) 的函数（如 GetContentRegionAvail），
 // 否则 MSVC 期望 RCX 传入隐藏 sret 缓冲区指针而 MinGW 不传，会导致按 Home 键瞬间触发 0xC0000005 闪退！
@@ -1115,7 +1831,21 @@ void draw_singlepass_tuner_panel() {
     if (!tbl) return;
 
     init_singlepass_tuner();
+    draw_hud_control_section(tbl);
+    tbl->Separator();
+
 #ifdef _WIN64
+    const bool has_dlss5_runtime =
+        GetModuleHandleW(L"renodx-dlss5.addon64") != nullptr ||
+        GetModuleHandleW(L"dlss5-feed.addon64") != nullptr;
+    if (!has_dlss5_runtime) {
+        call_text_colored_v(
+            tbl->TextColoredV,
+            ImVec4(0.75f, 0.80f, 0.86f, 0.92f),
+            "%s",
+            "\xe5\xbd\x93\xe5\x89\x8d\xe6\x9c\xaa\xe5\x90\xaf\xe7\x94\xa8 DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xef\xbc\x9b\xe6\x82\xa8\xe5\x8f\xaf\xe9\x9a\x8f\xe6\x97\xb6\xe6\x8c\x89 F7 \xe9\x94\xae\xe5\x88\x87\xe6\x8d\xa2\xe6\xb8\xb8\xe6\x88\x8f\xe5\x86\x85\xe5\xb8\xa7\xe7\x8e\x87/\xe6\x98\xbe\xe5\xad\x98/\xe5\xbb\xb6\xe8\xbf\x9f\xe7\x9b\x91\xe6\x8e\xa7\xe3\x80\x82");
+        return;
+    }
     if (!g_tuner.is_host64 && !tbl->IsAnyItemActive()) {
         sync_tuner_from_renodx_memory();
     }
@@ -1657,6 +2387,7 @@ void on_reshade_overlay(reshade::api::effect_runtime *runtime) {
     if (!g_gd_patched || !g_reshade_patched) {
         patch_reshade_in_memory();
     }
+    update_and_draw_perf_hud(runtime);
 #ifndef _WIN64
     const int cur_frame = ImGui::GetFrameCount();
     const bool home_visible = g_overlay_open || (cur_frame - g_last_home_tab_frame <= 1);
@@ -1689,7 +2420,10 @@ void on_reshade_overlay(reshade::api::effect_runtime *runtime) {
     (void)runtime;
     if (g_tuner64_registered && g_overlay_open64) {
         const imgui_function_table *tbl = g_table_hooked ? &g_orig : imgui_function_table_instance();
-        if (tbl && (GetModuleHandleW(L"renodx-dlss5.addon64") != nullptr || GetModuleHandleW(L"dlss5-feed.addon64") != nullptr)) {
+        const bool has_dlss5_rt =
+            GetModuleHandleW(L"renodx-dlss5.addon64") != nullptr ||
+            GetModuleHandleW(L"dlss5-feed.addon64") != nullptr;
+        if (tbl) {
             const int cur_frame = tbl->GetFrameCount();
             if (cur_frame - g_last_tuner64_tab_frame > 1) {
                 const ImGuiIO &io = tbl->GetIO();
@@ -1705,8 +2439,9 @@ void on_reshade_overlay(reshade::api::effect_runtime *runtime) {
                         win_w = disp_x - left_edge - 12.0f;
                     }
                     if (win_w < 320.0f) win_w = 320.0f;
+                    const float max_h = has_dlss5_rt ? 560.0f : 210.0f;
                     float win_h = disp_y - 24.0f;
-                    if (win_h > 476.0f) win_h = 476.0f;
+                    if (win_h > max_h) win_h = max_h;
                     const ImVec2 pos(left_edge, 8.0f);
                     const ImVec2 pivot(0.0f, 0.0f);
                     const ImVec2 sz(win_w, win_h);
@@ -1743,6 +2478,7 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
     install_imgui_hooks();
     patch_reshade_in_memory(false);
     reshade::register_event<reshade::addon_event::reshade_overlay>(on_reshade_overlay);
+    reshade::register_event<reshade::addon_event::destroy_effect_runtime>(on_destroy_effect_runtime);
 #ifndef _WIN64
     // 1. 预加载 dinput8.dll / hid.dll / setupapi.dll / winmm.dll，使 ReShade 在主线程同步完成延迟钩子安装，
     //    彻底消除多线程游戏（如《虐杀原形》prototypef.exe）工作线程并发加载 dinput8 与 HID.DLL 触发的钩子死锁警告与卡顿。
@@ -1824,7 +2560,9 @@ extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon, HMODULE reshade
         g_host64_present_registered = false;
     }
 #endif
+    reshade::unregister_event<reshade::addon_event::destroy_effect_runtime>(on_destroy_effect_runtime);
     reshade::unregister_event<reshade::addon_event::reshade_overlay>(on_reshade_overlay);
+    cleanup_perf_hud();
     unpatch_reshade_in_memory();
     remove_imgui_hooks();
     reshade::unregister_addon(addon, reshade_module);
