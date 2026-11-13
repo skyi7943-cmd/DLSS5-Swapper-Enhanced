@@ -14,8 +14,9 @@ const apply = require('./apply');
 const feederConfig = require('./feeder-config');
 const { scanGame } = require('./scan');
 const { detectGpuArchitecture } = require('./neural-models');
+const { ANR_FG, ensureAnrFg, isAnrOptiScalerProxy, cached } = require('./runtime-components');
 
-// 经过验证的开源 MFG 解锁组件指纹表 (MIT License)
+// 经过验证的开源 MFG 解锁组件与实验性多帧生成引擎指纹表
 const MFG_UNLOCKERS = Object.freeze({
   renodxAddon: Object.freeze({
     id: 'renodx-mfgunlock-1.5.5',
@@ -43,6 +44,20 @@ const MFG_UNLOCKERS = Object.freeze({
     size: 14445568,
     sha256: 'e6b6e6b70a6ed3af839c9647a32fc22660ae6b2d655062c5c072246c91fc10c7',
     supportedDlssg: ['310.9.0.0', '310.9.1.0', '310.9.16.0']
+  }),
+  anrFg: Object.freeze({
+    id: 'anr-fg-V.B15',
+    name: 'ANR 超省显存通用多帧生成 V.B15 (实验性 · 0.17MB 微缩模型 · 2X~6X)',
+    upstream: 'https://github.com/apex-compute/ANR',
+    license: 'Apache-2.0 / GPL-3.0 (Apex OptiScaler Host) / Apex Compute Beta',
+    version: ANR_FG.version,
+    releaseDate: '2026-11-12',
+    fileName: 'nvngx_dlssg.dll',
+    relPath: `enhanced/components/${ANR_FG.archiveName}`,
+    size: ANR_FG.providerSize,
+    sha256: ANR_FG.providerSha256,
+    optiscalerSha256: ANR_FG.optiscalerSha256,
+    supportedMultipliers: [2, 3, 4, 5, 6]
   })
 });
 
@@ -69,10 +84,62 @@ const TESTED_MFG_GAMES = Object.freeze([
   { pattern: /doom.*dark\s*ages/i, title: 'DOOM: The Dark Ages', status: 'experimental', notes: 'Vulkan 游戏：需添加启动参数 +r_allowBlackListedLayers 1 允许 ReShade 层加载。' }
 ]);
 
-// 检测 GPU 对 NVIDIA DLSS-G 与 x3/x4 MFG 的底层硬件支持能力（支持笔记本 40 系、40 系桌面卡、50 系桌面卡三档）
-// 注意：遵循严格要求，x3/x4 在未经当前游戏运行时实测验证生效前，绝不提前标记为“已验证可用”！
-function evaluateMfgGpuSupport(gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU', driverVersion = '617.42', hardwareProfile = null) {
+// 检测 GPU 对 NVIDIA DLSS-G 与 x3/x4 MFG 或 ANR FG (2X~6X) 的底层硬件支持能力
+// 注意：遵循严格要求，x3/x4 及实验性 ANR FG 在未经当前游戏运行时实测验证生效前，绝不提前标记为“已验证可用”！
+function evaluateMfgGpuSupport(gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU', driverVersion = '617.42', hardwareProfile = null, mfgBackend = 'auto') {
   const arch = detectGpuArchitecture(gpuName, hardwareProfile);
+  if (mfgBackend === 'anr-fg') {
+    const g = String(gpuName || '');
+    const isLegacyUnsupported = /\bGTX\s*(?:10\d{2}|9\d{2}|7\d{2}|6\d{2})\b/i.test(g) || arch.code === 'pascal' || arch.code === 'maxwell';
+    if (isLegacyUnsupported) {
+      return {
+        gpuName,
+        driverVersion,
+        hardwareProfile: hardwareProfile || 'rtx40_laptop',
+        mfgBackend: 'anr-fg',
+        architecture: arch,
+        anrCompatible: false,
+        hardwareOpticalFlow: false,
+        hardwareFlipMetering: false,
+        nativeX2: false,
+        nativeX3X4: false,
+        unlockRequiredForX3X4: false,
+        supportedModes: ['off'],
+        modeBadges: {
+          off: { status: 'verified', badge: '已验证可用' },
+          x2: { status: 'incompatible', badge: '不兼容' },
+          x3: { status: 'incompatible', badge: '不兼容' },
+          x4: { status: 'incompatible', badge: '不兼容' },
+          x5: { status: 'incompatible', badge: '不兼容' },
+          x6: { status: 'incompatible', badge: '不兼容' }
+        },
+        summary: `${gpuName} 缺少 FP16 / DP4A 计算单元支持，无法运行 ANR FG 神经插帧核心（最低需 GTX 16 / RTX 20 / RX 5000 / Arc 系列）。`
+      };
+    }
+    return {
+      gpuName,
+      driverVersion,
+      hardwareProfile: hardwareProfile || 'rtx40_laptop',
+      mfgBackend: 'anr-fg',
+      architecture: arch,
+      anrCompatible: true,
+      hardwareOpticalFlow: true,
+      hardwareFlipMetering: Boolean(arch.code === 'ada' || arch.code === 'blackwell'),
+      nativeX2: Boolean(arch.code === 'ada' || arch.code === 'blackwell'),
+      nativeX3X4: Boolean(arch.code === 'blackwell'),
+      unlockRequiredForX3X4: false,
+      supportedModes: ['off', 'x2', 'x3', 'x4', 'x5', 'x6'],
+      modeBadges: {
+        off: { status: 'verified', badge: '已验证可用' },
+        x2: { status: 'experimental', badge: '实验性支持 (ANR 省显存 2X)' },
+        x3: { status: 'experimental', badge: '实验性支持 (ANR 省显存 3X)' },
+        x4: { status: 'experimental', badge: '实验性支持 (ANR 省显存 4X)' },
+        x5: { status: 'experimental', badge: '实验性支持 (ANR 省显存 5X)' },
+        x6: { status: 'experimental', badge: '实验性支持 (ANR 省显存 6X)' }
+      },
+      summary: `${gpuName} 已匹配 ANR 超省显存通用多帧生成引擎 (${ANR_FG.version} · 0.17 MB 微缩模型)：4K 插帧显存仅 ~214 MB（相比原版省显存 ~62%），支持 GTX 16 / RTX 20~50 / AMD / Intel 全显卡解锁 2X~6X 多帧生成（实验性公测）。`
+    };
+  }
   if (arch.code === 'blackwell' || hardwareProfile === 'rtx50_desktop') {
     return {
       gpuName,
@@ -142,7 +209,7 @@ function evaluateMfgGpuSupport(gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU', d
   };
 }
 
-// 检验单个 nvngx_dlssg.dll 是否为正版 NVIDIA DLSS-G 二进制文件，拒绝 dlssg_to_fsr3 等第三方替换件
+// 检验单个 nvngx_dlssg.dll 是否为正版 NVIDIA DLSS-G 二进制文件或已验证的 ANR FG 提供程序，拒绝 dlssg_to_fsr3 等第三方伪装件
 function inspectDlssgBinary(filePath) {
   if (!filePath || !fs.existsSync(filePath)) {
     return { exists: false, valid: false, isFakeWrapper: false, version: null, reason: '未检测到 nvngx_dlssg.dll' };
@@ -157,6 +224,25 @@ function inspectDlssgBinary(filePath) {
   const version = pe.getFileVersion(filePath);
   const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
 
+  // 识别已验证 SHA-256 的 ANR 超省显存通用多帧生成核心 (Apex Neural Rendering FG V.B15)
+  if (bitness === 64 && sha256 === MFG_UNLOCKERS.anrFg.sha256) {
+    return {
+      exists: true,
+      present: true,
+      valid: true,
+      isFakeWrapper: false,
+      isAnrProvider: true,
+      filePath,
+      fileName: path.basename(filePath),
+      size: buf.length,
+      version: `ANR-${ANR_FG.version}`,
+      sha256,
+      supportsMfgX3X4: true,
+      supportsMfgX5X6: true,
+      reason: `ANR 超省显存通用多帧生成核心 (${ANR_FG.version} · 0.17 MB 微缩模型 · 支持 2X~6X)`
+    };
+  }
+
   // 检查是否为 dlssg-to-fsr3 或 Universal DLSSG to FSR3 伪装 DLL
   const hasFsr3Spoof = buf.includes(Buffer.from('dlssg_to_fsr3', 'latin1')) ||
     buf.includes(Buffer.from('amd_fidelityfx', 'latin1')) ||
@@ -166,6 +252,7 @@ function inspectDlssgBinary(filePath) {
   if (hasFsr3Spoof) {
     return {
       exists: true,
+      present: true,
       valid: false,
       isFakeWrapper: true,
       filePath,
@@ -182,6 +269,7 @@ function inspectDlssgBinary(filePath) {
   if (!hasNvidiaDlssg || bitness !== 64) {
     return {
       exists: true,
+      present: true,
       valid: false,
       isFakeWrapper: false,
       filePath,
@@ -194,6 +282,7 @@ function inspectDlssgBinary(filePath) {
   const is310_9 = /^310\.9\./.test(String(version || ''));
   return {
     exists: true,
+    present: true,
     valid: true,
     isFakeWrapper: false,
     filePath,
@@ -239,7 +328,7 @@ function detectMfgInjectorConflicts(gameDir, exeDir, scan) {
         });
       }
     }
-    if (/^(version|winmm|dinput8|winhttp)\.dll$/i.test(lower)) {
+    if (/^(version|winmm|dinput8|winhttp)\.dll$/i.test(lower) && !isAnrOptiScalerProxy(full)) {
       const isMfgProxy = pe.versionMentions(full, 'MFGUnlocker') ||
         (() => { try { return fs.readFileSync(full).includes(Buffer.from('RTXMFG-Universal')); } catch { return false; } })();
       if (isMfgProxy && files.some((f) => /^renodx-mfgunlock\.addon64$/i.test(f))) {
@@ -251,6 +340,16 @@ function detectMfgInjectorConflicts(gameDir, exeDir, scan) {
         });
       }
     }
+  }
+
+  const anrDll = path.join(exeDir, 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg', 'nvngx_dlssg.dll');
+  if (fs.existsSync(anrDll) && files.some((f) => /^renodx-mfgunlock\.addon64$/i.test(f))) {
+    conflicts.push({
+      severity: 'warning',
+      file: 'renodx-mfgunlock.addon64',
+      code: 'DUPLICATE_MFG_ENGINES',
+      message: '检测到同时存在 NVIDIA 原生 MFG 解锁插件 (renodx-mfgunlock.addon64) 与 ANR FG 引擎，重新点击应用配置即可自动清理冗余插件。'
+    });
   }
 
   // 检查游戏图形 API 是否支持原生 DLSS-G (仅 DirectX 12 与 Vulkan 支持)
@@ -276,12 +375,13 @@ function detectMfgInjectorConflicts(gameDir, exeDir, scan) {
   return conflicts;
 }
 
-// 解析游戏目录与系统临时目录中的 MFG 运行时日志与遥测状态，验证 x2/x3/x4 是否真实生效
+// 解析游戏目录与系统临时目录中的 MFG 运行时日志与遥测状态，验证 x2/x3/x4 或 ANR 2X~6X 是否真实生效
 function verifyMfgRuntimeStatus(gameDir, exeDir) {
   const dirs = [...new Set([exeDir, gameDir].filter(Boolean))];
   let providerVerified = false;
   let temporalFixApplied = false;
   let blackwellKernelsActive = false;
+  let anrRuntimeVerified = false;
   let requestedMultiplier = null;
   let effectiveMultiplier = null;
   let presentedFrames = 0;
@@ -341,13 +441,80 @@ function verifyMfgRuntimeStatus(gameDir, exeDir) {
         if (status.error) errors.push(String(status.error));
       } catch {}
     }
+
+    // 3. 解析 ANR FG (Apex Neural Rendering) 的 nr_fg-*.log 与 OptiScaler.log
+    const anrLogDir = path.join(d, 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg');
+    if (fs.existsSync(anrLogDir)) {
+      try {
+        const nrLogs = fs.readdirSync(anrLogDir)
+          .filter((f) => /^nr_fg.*\.log$/i.test(f))
+          .map((f) => {
+            const full = path.join(anrLogDir, f);
+            return { full, mtime: fs.statSync(full).mtimeMs };
+          })
+          .sort((a, b) => b.mtime - a.mtime);
+        if (nrLogs[0]) {
+          const text = fs.readFileSync(nrLogs[0].full, 'utf8');
+          logSources.push(path.relative(gameDir, nrLogs[0].full));
+          if (/\[DeviceLost\]/i.test(text)) {
+            errors.push('ANR FG 报告显卡设备丢失 ([DeviceLost])，建议将插帧倍率调低一档或保持切镜防果冻保护开启。');
+          }
+          if (/lacks shaderFloat16/i.test(text)) {
+            errors.push('ANR FG 报告当前显卡不支持 shaderFloat16，无法运行神经插帧核函数。');
+          }
+          if (/GPU path table:|generated frames go through the output pass:|path\s+\S+\s+after:/i.test(text)) {
+            providerVerified = true;
+            anrRuntimeVerified = true;
+            dlssgStatus = 'ANR FG Active';
+          }
+          const genMatch = [...text.matchAll(/(?:numGeneratedFrames|generated[_\s]+frames?|num_generated)\s*[:=]\s*(\d+)/gi)].pop();
+          if (genMatch && Number(genMatch[1]) >= 1) {
+            effectiveMultiplier = Math.min(6, Number(genMatch[1]) + 1);
+          }
+        }
+      } catch {}
+    }
+
+    const optiLog = path.join(d, 'OptiScaler.log');
+    if (fs.existsSync(optiLog)) {
+      try {
+        const size = fs.statSync(optiLog).size;
+        const fd = fs.openSync(optiLog, 'r');
+        const readLen = Math.min(size, 256 * 1024);
+        const buf = Buffer.alloc(readLen);
+        fs.readSync(fd, buf, 0, readLen, Math.max(0, size - readLen));
+        fs.closeSync(fd);
+        const text = buf.toString('utf8');
+        if (/Apex Neural Rendering FG/i.test(text)) {
+          logSources.push(path.relative(gameDir, optiLog));
+        }
+        const optiMultMatch = [...text.matchAll(/(?:DLSSG Interpolation Count set to|numGeneratedFrames)\s*:\s*(\d+)/gi)].pop();
+        if (optiMultMatch && Number(optiMultMatch[1]) >= 1) {
+          const parsedMult = Math.min(6, Number(optiMultMatch[1]) + 1);
+          requestedMultiplier = parsedMult;
+          if (anrRuntimeVerified) effectiveMultiplier = parsedMult;
+        }
+      } catch {}
+    }
+
+    if (anrRuntimeVerified && !effectiveMultiplier) {
+      const optiIni = path.join(d, 'OptiScaler.ini');
+      if (fs.existsSync(optiIni)) {
+        const optiText = feederConfig.readText(optiIni);
+        const interp = Number(feederConfig.getIni(optiText, 'DLSSG', 'InterpolationCount') || 2);
+        if (Number.isFinite(interp) && interp >= 1) {
+          effectiveMultiplier = Math.max(2, Math.min(6, interp + 1));
+          requestedMultiplier = effectiveMultiplier;
+        }
+      }
+    }
   }
 
   const verifiedActive = Boolean(
     providerVerified &&
     effectiveMultiplier &&
     effectiveMultiplier >= 2 &&
-    (effectiveMultiplier === 2 || temporalFixApplied || blackwellKernelsActive) &&
+    (effectiveMultiplier === 2 || temporalFixApplied || blackwellKernelsActive || anrRuntimeVerified) &&
     errors.length === 0
   );
 
@@ -356,6 +523,7 @@ function verifyMfgRuntimeStatus(gameDir, exeDir) {
     providerVerified,
     temporalFixApplied,
     blackwellKernelsActive,
+    anrRuntimeVerified,
     requestedMultiplier,
     effectiveMultiplier,
     presentedFrames,
@@ -373,9 +541,46 @@ function readCurrentMfgConfiguration(exeDir) {
 
   const addonFile = path.join(exeDir, 'renodx-mfgunlock.addon64');
   const asiFile = path.join(exeDir, 'OptiScaler', 'plugins', 'MFGUnlocker.asi');
+  const anrProviderFile = path.join(exeDir, 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg', 'nvngx_dlssg.dll');
+  const anrIniFile = path.join(exeDir, 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg', 'nr_fg.ini');
   const reshadeIni = path.join(exeDir, 'ReShade.ini');
   const universalJson = path.join(exeDir, 'RTXMFG-Universal.json');
   const optiIni = path.join(exeDir, 'OptiScaler.ini');
+
+  if (fs.existsSync(anrProviderFile) && fs.existsSync(optiIni)) {
+    const optiText = feederConfig.readText(optiIni);
+    const fgReplacement = feederConfig.getIni(optiText, 'FrameGen', 'FGNvngxReplacement') ||
+      feederConfig.getIni(optiText, 'DLSSG', 'FGNvngxReplacement') || '';
+    const anrProxy = ['dxgi.dll', 'winmm.dll', 'version.dll'].find((p) => isAnrOptiScalerProxy(path.join(exeDir, p))) || null;
+    if (/Apex Neural Rendering FG/i.test(fgReplacement) || anrProxy) {
+      const interpRaw = Number(feederConfig.getIni(optiText, 'DLSSG', 'InterpolationCount') || 2);
+      const mult = Math.max(2, Math.min(6, Number.isFinite(interpRaw) && interpRaw >= 1 ? interpRaw + 1 : 3));
+      const anrIniText = feederConfig.readText(anrIniFile);
+      const sceneCutMatch = anrIniText.match(/^\s*scene_cut\s*=\s*(\d+)/m);
+      const sceneCut = sceneCutMatch ? sceneCutMatch[1] !== '0' : true;
+      const pathMatch = anrIniText.match(/^\s*path\s*=\s*([^\s;#]+)/m);
+      const kernelPath = pathMatch ? pathMatch[1] : 'auto';
+      const loadReshade = feederConfig.getIni(optiText, 'Plugins', 'LoadReshade') === 'true';
+      return {
+        installed: true,
+        backend: 'anr-fg',
+        backendName: MFG_UNLOCKERS.anrFg.name,
+        mode: `x${mult}`,
+        multiplier: mult,
+        mfgStrategy: 'anr_low_vram_universal',
+        proxy: anrProxy,
+        chainedReShade: loadReshade,
+        settings: {
+          enabled: true,
+          forceMultiplier: mult,
+          interpolationCount: mult - 1,
+          sceneCut,
+          kernelPath,
+          loadReshade
+        }
+      };
+    }
+  }
 
   if (fs.existsSync(addonFile)) {
     const iniText = feederConfig.readText(reshadeIni);
@@ -441,21 +646,29 @@ async function inspectGameMfgStatus(gameDir, {
   payloadDir,
   gpuName = 'NVIDIA GeForce RTX 4070 Laptop GPU',
   driverVersion = '617.42',
-  hardwareProfile = null
+  hardwareProfile = null,
+  mfgBackend = null
 } = {}) {
   const scan = await scanGame(gameDir);
   const exePath = scan.chosen ? scan.chosen.path : null;
   const exeDir = exePath ? path.dirname(exePath) : gameDir;
 
-  const gpuSupport = evaluateMfgGpuSupport(gpuName, driverVersion, hardwareProfile);
+  const currentConfig = readCurrentMfgConfiguration(exeDir);
+  const effectiveMfgBackend = mfgBackend || (currentConfig.backend === 'anr-fg' ? 'anr-fg' : 'auto');
+  const gpuSupport = evaluateMfgGpuSupport(gpuName, driverVersion, hardwareProfile, effectiveMfgBackend);
 
-  // 查找游戏中的 nvngx_dlssg.dll
+  // 查找游戏中的 nvngx_dlssg.dll（以及可选的 ANR 提供程序）
   const dlssgFiles = scan.dlssFiles.filter((f) => /^nvngx_dlssg\.dll$/i.test(f.name));
   const exeDlssg = path.join(exeDir, 'nvngx_dlssg.dll');
   const primaryDlssgPath = fs.existsSync(exeDlssg)
     ? exeDlssg
     : (dlssgFiles[0] ? dlssgFiles[0].path : null);
-  const dlssgCheck = inspectDlssgBinary(primaryDlssgPath);
+  const nativeDlssgCheck = inspectDlssgBinary(primaryDlssgPath);
+  const anrProviderPath = path.join(exeDir, 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg', 'nvngx_dlssg.dll');
+  const anrProviderCheck = fs.existsSync(anrProviderPath) ? inspectDlssgBinary(anrProviderPath) : null;
+  const dlssgCheck = (currentConfig.backend === 'anr-fg' && anrProviderCheck && anrProviderCheck.valid)
+    ? { ...anrProviderCheck, nativeDlssgVersion: nativeDlssgCheck.version || null }
+    : nativeDlssgCheck;
 
   // 查找 Streamline 组件
   const slInterposer = scan.streamlineFiles.find((f) => /^sl\.interposer\.dll$/i.test(f.name)) ||
@@ -485,7 +698,6 @@ async function inspectGameMfgStatus(gameDir, {
     filesCount: scan.streamlineFiles.length
   };
 
-  const currentConfig = readCurrentMfgConfiguration(exeDir);
   const conflicts = detectMfgInjectorConflicts(gameDir, exeDir, scan);
   const runtimeVerification = verifyMfgRuntimeStatus(gameDir, exeDir);
 
@@ -497,7 +709,21 @@ async function inspectGameMfgStatus(gameDir, {
   // 计算当前游戏的兼容性状态徽章（严守原则：未经测试实际生效绝不标为“已验证可用”）
   let status = 'untested';
   let statusBadge = '尚未测试';
-  if (!gpuSupport.hardwareOpticalFlow || conflicts.some((c) => c.severity === 'error')) {
+  if (effectiveMfgBackend === 'anr-fg' || currentConfig.backend === 'anr-fg') {
+    if (!gpuSupport.anrCompatible || conflicts.some((c) => c.severity === 'error')) {
+      status = 'incompatible';
+      statusBadge = '不兼容';
+    } else if (runtimeVerification.verifiedActive) {
+      status = 'verified';
+      statusBadge = `已验证可用 (ANR ${runtimeVerification.effectiveMultiplier}x 运行时确认)`;
+    } else if (currentConfig.backend === 'anr-fg' && currentConfig.installed) {
+      status = 'experimental';
+      statusBadge = `实验性支持 (ANR ${currentConfig.mode.toUpperCase()} · 待进入游戏验证)`;
+    } else {
+      status = 'experimental';
+      statusBadge = '实验性支持 (ANR 超省显存公测引擎)';
+    }
+  } else if (!gpuSupport.hardwareOpticalFlow || conflicts.some((c) => c.severity === 'error')) {
     status = 'incompatible';
     statusBadge = '不兼容';
   } else if (runtimeVerification.verifiedActive) {
@@ -523,8 +749,10 @@ async function inspectGameMfgStatus(gameDir, {
     api: scan.chosen ? scan.chosen.apiLabel : null,
     bitness: scan.chosen ? scan.chosen.bitness : null,
     hardwareProfile: gpuSupport.hardwareProfile,
+    mfgBackend: effectiveMfgBackend,
     gpuSupport,
     dlssg: dlssgCheck,
+    anrProvider: anrProviderCheck,
     streamline: streamlineStatus,
     currentConfig,
     effectiveMultiplier: runtimeVerification.effectiveMultiplier
@@ -540,19 +768,146 @@ async function inspectGameMfgStatus(gameDir, {
   };
 }
 
-// 自动配置并安装/更新 MFG 模式 (Off / x2 / x3 / x4)，所有修改均纳入 _DLSS5_Backup 事务，支持一键恢复
+// 事务安全地移除或还原单个由本模块部署的文件（若存在原厂备份则还原原厂文件，否则删除新增文件）
+async function revertOrRemoveTrackedFile(manifest, gameDir, targetPath) {
+  if (!targetPath || !fs.existsSync(targetPath)) return;
+  const rel = path.relative(gameDir, targetPath);
+  const relNorm = path.normalize(rel).toLowerCase();
+  await journal.capture(gameDir, targetPath);
+  await fs.promises.chmod(targetPath, 0o666).catch(() => {});
+
+  const replacedIdx = Array.isArray(manifest.replaced)
+    ? manifest.replaced.findIndex((r) => path.normalize(String(r.rel || '')).toLowerCase() === relNorm)
+    : -1;
+  if (replacedIdx !== -1) {
+    let backupFile = null;
+    try { backupFile = apply.originalPath(gameDir, manifest, manifest.replaced[replacedIdx].rel); } catch {}
+    if (backupFile && fs.existsSync(backupFile)) {
+      await fs.promises.copyFile(backupFile, targetPath);
+      await fs.promises.chmod(targetPath, 0o666).catch(() => {});
+      manifest.replaced.splice(replacedIdx, 1);
+      return;
+    }
+  }
+  await fs.promises.unlink(targetPath).catch(() => {});
+  if (Array.isArray(manifest.added)) {
+    manifest.added = manifest.added.filter((a) => path.normalize(String(a)).toLowerCase() !== relNorm);
+  }
+}
+
+// 清理已安装的 ANR FG 引擎与 Apex OptiScaler 代理，并在仍有 ReShade 插件时无损将 ReShade64.dll 提升回原钩子位
+async function cleanupAnrFgInstallation(manifest, gameDir, exeDir, scan, onLog = () => {}) {
+  const anrCustomDir = path.join(exeDir, 'OptiScaler', 'custom', 'Apex Neural Rendering FG');
+  const anrProxies = ['dxgi.dll', 'winmm.dll', 'version.dll']
+    .map((p) => path.join(exeDir, p))
+    .filter((full) => isAnrOptiScalerProxy(full));
+  if (!fs.existsSync(anrCustomDir) && anrProxies.length === 0) return false;
+
+  // 1. 删除游戏运行期间自动产生的日志，避免空目录清理残留
+  const dlssgLogDir = path.join(anrCustomDir, 'dlssg');
+  if (fs.existsSync(dlssgLogDir)) {
+    try {
+      for (const f of fs.readdirSync(dlssgLogDir)) {
+        if (/^nr_fg.*\.log$/i.test(f)) {
+          await fs.promises.unlink(path.join(dlssgLogDir, f)).catch(() => {});
+        }
+      }
+    } catch {}
+  }
+  const optiLog = path.join(exeDir, 'OptiScaler.log');
+  if (fs.existsSync(optiLog)) {
+    await fs.promises.unlink(optiLog).catch(() => {});
+  }
+
+  // 2. 递归移除 OptiScaler/custom/Apex Neural Rendering FG 下的全部追踪文件
+  const collectFiles = (dir) => {
+    const out = [];
+    if (!fs.existsSync(dir)) return out;
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) out.push(...collectFiles(full));
+      else if (ent.isFile()) out.push(full);
+    }
+    return out;
+  };
+  for (const f of collectFiles(anrCustomDir)) {
+    await revertOrRemoveTrackedFile(manifest, gameDir, f);
+  }
+  await revertOrRemoveTrackedFile(manifest, gameDir, path.join(exeDir, 'OptiScaler', 'licenses', 'OptiScaler-GPL-3.0.txt'));
+
+  // 3. 若当前并非 OptiScaler 神经渲染路线，移除/还原 OptiScaler.ini 与 Apex OptiScaler 代理 DLL
+  if (manifest.route !== 'optiscaler') {
+    await revertOrRemoveTrackedFile(manifest, gameDir, path.join(exeDir, 'OptiScaler.ini'));
+    for (const proxyFull of anrProxies) {
+      await revertOrRemoveTrackedFile(manifest, gameDir, proxyFull);
+      onLog({ code: 'mfgComponentRemoved', params: { file: path.basename(proxyFull) } });
+    }
+  }
+
+  // 4. 若目录内曾通过 LoadReshade=true 链式挂载 ReShade64.dll：
+  //    - 当目录内仍保留 ReShade Addon (.addon64) 且非 Vulkan 时，自动将 ReShade64.dll 迁回标准安全钩子位 (dxgi.dll / d3d12.dll 等)
+  //    - 当目录内已无任何 .addon64 时，一并清理新增的 ReShade64.dll
+  const reshade64Path = path.join(exeDir, 'ReShade64.dll');
+  if (fs.existsSync(reshade64Path) && pe.versionMentions(reshade64Path, 'ReShade')) {
+    const hasRemainingAddons = (() => {
+      try { return fs.readdirSync(exeDir).some((f) => /\.addon(?:64|32)?$/i.test(f)); } catch { return false; }
+    })();
+    const api = scan?.chosen?.api || 'dxgi';
+    const apiLabel = scan?.chosen?.apiLabel || 'DirectX 12';
+    if (hasRemainingAddons && api !== 'vulkan') {
+      const { inspectReShade } = require('./scan');
+      const rsNow = inspectReShade(exeDir);
+      if (!rsNow.installed || rsNow.kind !== 'proxy') {
+        const safeHook = apply.selectSafeReShadeHook
+          ? apply.selectSafeReShadeHook(exeDir, api, apiLabel, 'dxgi')
+          : { hook: 'dxgi.dll' };
+        const destHook = path.join(exeDir, safeHook.hook || 'dxgi.dll');
+        if (path.resolve(destHook).toLowerCase() !== path.resolve(reshade64Path).toLowerCase()) {
+          await apply.copyTracked(manifest, gameDir, reshade64Path, destHook, { kind: 'reshade' });
+          manifest.reshade.file = path.basename(destHook);
+          await revertOrRemoveTrackedFile(manifest, gameDir, reshade64Path);
+        }
+      }
+    } else if (!hasRemainingAddons) {
+      await revertOrRemoveTrackedFile(manifest, gameDir, reshade64Path);
+    }
+  }
+
+  // 5. 自底向上移除已变空的 OptiScaler 子目录
+  const pruneEmptyDirs = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (ent.isDirectory()) pruneEmptyDirs(path.join(dir, ent.name));
+    }
+    try {
+      if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+    } catch {}
+  };
+  pruneEmptyDirs(path.join(exeDir, 'OptiScaler'));
+  return true;
+}
+
+// 自动配置并安装/更新 MFG 模式 (Off / x2 / x3 / x4，ANR 模式下支持至 x5 / x6)，所有修改均纳入 _DLSS5_Backup 事务，支持一键恢复
 async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
   const {
-    mode = 'off', // 'off' | 'x2' | 'x3' | 'x4'
-    backend = 'auto', // 'auto' | 'renodx-mfgunlock' | 'mfg-unlocker-asi'
+    mode = 'off', // 'off' | 'x2' | 'x3' | 'x4' | ('x5' | 'x6' when backend === 'anr-fg')
+    backend = 'auto', // 'auto' | 'renodx-mfgunlock' | 'mfg-unlocker-asi' | 'anr-fg'
     upgradeDlssg = true, // 是否自动将旧版或缺失的 nvngx_dlssg.dll 升级至 310.9.1 / 310.9.16
     runtimeStack = 'baseline-310.9.1', // 'baseline-310.9.1' | 'oct2026-310.9.16'
     hdrCompatibility = false, // 是否开启 Automatic Guard + UI Composition (HDR 修复)
     hardwareProfile = 'rtx40_laptop', // 'rtx40_laptop' | 'rtx40_desktop' | 'rtx50_desktop'
+    anrSceneCut = true, // ANR FG 切镜防果冻保护 (scene_cut = 1)
+    anrKernelPath = 'auto', // ANR FG 算子路径 (auto / coopmat / packed / dp4a / portable)
+    gpuName,
+    driverVersion,
+    userDataDir,
     payloadDir
   } = options;
 
-  if (!['off', 'x2', 'x3', 'x4'].includes(mode)) {
+  const allowedModes = backend === 'anr-fg'
+    ? ['off', 'x2', 'x3', 'x4', 'x5', 'x6']
+    : ['off', 'x2', 'x3', 'x4'];
+  if (!allowedModes.includes(mode)) {
     throw Object.assign(new Error(`无效的 MFG 模式: ${mode}`), { code: 'errInvalidMfgMode' });
   }
 
@@ -577,16 +932,15 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
     const reshadeIniPath = path.join(exeDir, 'ReShade.ini');
     const optiIniPath = path.join(exeDir, 'OptiScaler.ini');
 
-    // 当选择 Off 时，移除已安装的 MFG 解锁插件并清理配置项
+    // 当选择 Off 时，移除已安装的 MFG 解锁插件或 ANR FG 引擎并清理配置项
     if (mode === 'off') {
       for (const target of [addonDest, asiDest, jsonDest]) {
         if (fs.existsSync(target)) {
-          await journal.capture(gameDir, target);
-          await fs.promises.chmod(target, 0o666).catch(() => {});
-          await fs.promises.unlink(target);
+          await revertOrRemoveTrackedFile(manifest, gameDir, target);
           onLog({ code: 'mfgComponentRemoved', params: { file: path.basename(target) } });
         }
       }
+      await cleanupAnrFgInstallation(manifest, gameDir, exeDir, scan, onLog);
       if (fs.existsSync(reshadeIniPath)) {
         let iniText = feederConfig.readText(reshadeIniPath);
         iniText = iniText.replace(/^LoadFromDllMain=.*renodx-mfgunlock\.addon64.*\r?\n?/gim, '');
@@ -610,12 +964,18 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       throw Object.assign(new Error(fatalConflict.message), { code: fatalConflict.code, conflicts });
     }
 
-    const multiplier = Number(mode.slice(1)); // 2, 3, 4
+    const multiplier = Number(mode.slice(1)); // 2..6
+    const hasExistingAnr = fs.existsSync(path.join(exeDir, 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg', 'nvngx_dlssg.dll'));
     const isOptiRoute = manifest.route === 'optiscaler' || Boolean(scan.install?.optiscaler?.installed) ||
-      (fs.existsSync(optiIniPath) && !fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')));
+      (fs.existsSync(optiIniPath) && !hasExistingAnr && !fs.existsSync(path.join(exeDir, 'renodx-dlss5.addon64')));
     const selectedBackend = backend === 'auto'
       ? (isOptiRoute ? 'mfg-unlocker-asi' : 'renodx-mfgunlock')
       : backend;
+
+    // 若从 ANR FG 切换回 NVIDIA 原生 MFG / ASI 插件，先干净卸载 ANR FG 并将 ReShade64.dll 迁回原位
+    if (selectedBackend !== 'anr-fg' && hasExistingAnr) {
+      await cleanupAnrFgInstallation(manifest, gameDir, exeDir, scan, onLog);
+    }
 
     // 0. 自动修复旧版本可能覆盖过的 sl.interposer.dll / sl.common.dll / sl.dlss.dll / sl.dlss_g.dll / sl.reflex.dll / sl.pcl.dll
     //    （只要 _DLSS5_Backup/originals 中存在原厂备份且当前文件版本被替换过，或与原厂 sl.interposer.dll 版本不一致，立即还原为原厂文件，杜绝 NBA 2K27 等游戏内帧生成选项变灰）
@@ -657,7 +1017,7 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
       }
     }
 
-    // 1. 确保游戏具备支持 x2/x3/x4 的正版 nvngx_dlssg.dll (310.9.16.0)
+    // 1. 解析内置 payload 根目录
     const effectivePayloadDir = [
       payloadDir,
       process.resourcesPath ? path.join(process.resourcesPath, 'payload') : null,
@@ -670,8 +1030,216 @@ async function applyMfgConfiguration(gameDir, options = {}, onLog = () => {}) {
     // 50 系桌面卡默认优先使用 2026-10 最新 310.9.16 + Streamline 2.14.16 运行时栈
     const effectiveStack = hardwareProfile === 'rtx50_desktop' ? 'oct2026-310.9.16' : runtimeStack;
 
+    // 分支 A：部署「ANR 超省显存通用多帧生成（实验性）」(Apex Neural Rendering FG Beta V.B15 · 2X~6X)
+    if (selectedBackend === 'anr-fg') {
+      const anrGpuCheck = evaluateMfgGpuSupport(gpuName || 'NVIDIA GeForce RTX 4070 Laptop GPU', driverVersion || '617.42', hardwareProfile, 'anr-fg');
+      if (!anrGpuCheck.anrCompatible) {
+        throw Object.assign(new Error(anrGpuCheck.summary), { code: 'errAnrUnsupportedGpu' });
+      }
+      const effectiveCacheRoot = userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced');
+      const anrBase = await ensureAnrFg(effectiveCacheRoot);
+
+      // 移除互斥的 NVIDIA 原生 MFG 解锁插件，防止双插件同时拦截 DLSS-G
+      for (const stale of [addonDest, asiDest, jsonDest, path.join(exeDir, 'MFGAdaUnlock-RenoDx-LICENSE.txt')]) {
+        if (fs.existsSync(stale)) {
+          await revertOrRemoveTrackedFile(manifest, gameDir, stale);
+        }
+      }
+      if (fs.existsSync(reshadeIniPath)) {
+        let iniText = feederConfig.readText(reshadeIniPath);
+        iniText = iniText.replace(/^LoadFromDllMain=.*renodx-mfgunlock\.addon64.*\r?\n?/gim, '');
+        iniText = feederConfig.setIni(iniText, 'RenoDX.MFGUnlock', 'Enabled', '0');
+        await apply.writeTracked(manifest, gameDir, reshadeIniPath, iniText, { kind: 'config' });
+      }
+
+      // 若游戏完全缺失 nvngx_dlssg.dll（部分老版 Streamline 游戏），仅在缺失时补充一份占位 nvngx_dlssg.dll 以激活游戏内开关；
+      // 若游戏原本自带 nvngx_dlssg.dll，则保持原文件不动，由 Apex OptiScaler 重定向至 ANR FG 提供程序
+      const existingGameDlssg = scan.dlssFiles.filter((f) => /^nvngx_dlssg\.dll$/i.test(f.name) && f.bitness === 64);
+      if (!existingGameDlssg.length && !fs.existsSync(path.join(exeDir, 'nvngx_dlssg.dll')) && effectivePayloadDir) {
+        const dlssgEnh = path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlssg.dll');
+        const srcDlssg = fs.existsSync(dlssgEnh) ? dlssgEnh : path.join(effectivePayloadDir, 'streamline', 'nvngx_dlssg.dll');
+        if (fs.existsSync(srcDlssg)) {
+          await apply.copyTracked(manifest, gameDir, srcDlssg, path.join(exeDir, 'nvngx_dlssg.dll'), {
+            kind: 'runtime',
+            newVersion: pe.getFileVersion(srcDlssg)
+          });
+        }
+      }
+
+      // 协调 ReShade (DLSS 5 神经渲染 + 中文 Home 菜单) 与 Apex OptiScaler 的零冲突链式挂载：
+      // DX12 游戏下将 ReShade 置于 ReShade64.dll，由 OptiScaler.ini [Plugins] LoadReshade=true 自动链式加载；
+      // 若 dxgi.dll 已被外部学习补丁/Mod 占用，则 Apex OptiScaler 自动退避至 winmm.dll / version.dll！
+      let anrProxyName = 'dxgi.dll';
+      let shouldChainReShade = false;
+      const isVulkanGame = scan.chosen.api === 'vulkan';
+
+      if (isVulkanGame) {
+        const winmmFull = path.join(exeDir, 'winmm.dll');
+        anrProxyName = (!fs.existsSync(winmmFull) || isAnrOptiScalerProxy(winmmFull)) ? 'winmm.dll' : 'version.dll';
+        shouldChainReShade = false;
+      } else {
+        const { inspectReShade } = require('./scan');
+        const rsNow = inspectReShade(exeDir);
+        const hasAnyAddon = (() => {
+          try { return fs.readdirSync(exeDir).some((f) => /\.addon(?:64|32)?$/i.test(f)); } catch { return false; }
+        })();
+        const reshade64Dest = path.join(exeDir, 'ReShade64.dll');
+        const bundledReshade = effectivePayloadDir ? path.join(effectivePayloadDir, 'reshade-vulkan', 'ReShade64.dll') : null;
+
+        if (rsNow.installed && rsNow.kind === 'proxy' && rsNow.file) {
+          const oldProxyPath = path.join(exeDir, rsNow.file);
+          await apply.copyTracked(manifest, gameDir, oldProxyPath, reshade64Dest, { kind: 'reshade' });
+          if (rsNow.file.toLowerCase() !== 'dxgi.dll') {
+            await revertOrRemoveTrackedFile(manifest, gameDir, oldProxyPath);
+          }
+          manifest.reshade.file = 'ReShade64.dll';
+          shouldChainReShade = true;
+        } else if (fs.existsSync(reshade64Dest) && pe.versionMentions(reshade64Dest, 'ReShade')) {
+          shouldChainReShade = true;
+        } else if (hasAnyAddon && bundledReshade && fs.existsSync(bundledReshade)) {
+          await apply.copyTracked(manifest, gameDir, bundledReshade, reshade64Dest, { kind: 'reshade' });
+          manifest.reshade.installedByUs = true;
+          manifest.reshade.file = 'ReShade64.dll';
+          shouldChainReShade = true;
+        }
+
+        const dxgiPath = path.join(exeDir, 'dxgi.dll');
+        const dxgiIsSafeForOpti = !fs.existsSync(dxgiPath) ||
+          isAnrOptiScalerProxy(dxgiPath) ||
+          pe.versionMentions(dxgiPath, 'ReShade') ||
+          (apply.isAddonReShade && apply.isAddonReShade(dxgiPath));
+        if (dxgiIsSafeForOpti) {
+          anrProxyName = 'dxgi.dll';
+        } else {
+          const winmmPath = path.join(exeDir, 'winmm.dll');
+          anrProxyName = (!fs.existsSync(winmmPath) || isAnrOptiScalerProxy(winmmPath)) ? 'winmm.dll' : 'version.dll';
+        }
+        // 清理除当前选定槽位以外可能残留的旧 ANR 代理文件
+        for (const otherProxy of ['dxgi.dll', 'winmm.dll', 'version.dll']) {
+          if (otherProxy.toLowerCase() === anrProxyName.toLowerCase()) continue;
+          const otherFull = path.join(exeDir, otherProxy);
+          if (isAnrOptiScalerProxy(otherFull)) {
+            await revertOrRemoveTrackedFile(manifest, gameDir, otherFull);
+          }
+        }
+      }
+
+      // 部署 Apex OptiScaler 主代理 DLL
+      const srcOptiDll = path.join(anrBase, 'game', 'dxgi.dll');
+      await apply.copyTracked(manifest, gameDir, srcOptiDll, path.join(exeDir, anrProxyName), {
+        kind: 'optiscaler',
+        newVersion: ANR_FG.version
+      });
+
+      // 递归部署 OptiScaler/custom/Apex Neural Rendering FG/** 与 GPL-3.0 许可证
+      const srcAnrCustom = path.join(anrBase, 'game', 'OptiScaler', 'custom', 'Apex Neural Rendering FG');
+      const destAnrCustom = path.join(exeDir, 'OptiScaler', 'custom', 'Apex Neural Rendering FG');
+      const copyTree = async (srcDir, dstDir) => {
+        for (const ent of fs.readdirSync(srcDir, { withFileTypes: true })) {
+          const s = path.join(srcDir, ent.name);
+          const d = path.join(dstDir, ent.name);
+          if (ent.isDirectory()) await copyTree(s, d);
+          else if (ent.isFile() && ent.name.toLowerCase() !== 'nr_fg.ini') {
+            await apply.copyTracked(manifest, gameDir, s, d, { kind: 'anr-fg' });
+          }
+        }
+      };
+      await copyTree(srcAnrCustom, destAnrCustom);
+
+      const srcGpl = path.join(anrBase, 'LICENSES', 'OptiScaler-GPL-3.0.txt');
+      if (fs.existsSync(srcGpl)) {
+        await apply.copyTracked(
+          manifest,
+          gameDir,
+          srcGpl,
+          path.join(exeDir, 'OptiScaler', 'licenses', 'OptiScaler-GPL-3.0.txt'),
+          { kind: 'license' }
+        );
+      }
+
+      // 生成 nr_fg.ini（配置切镜防果冻保护 scene_cut、最大生成帧数 max_generated=5 支持至 6X）
+      const validPaths = new Set(['auto', 'coopmat', 'packed', 'dp4a', 'portable', 'portable-linalg', 'portable-xmx']);
+      const safeKernelPath = validPaths.has(String(anrKernelPath || 'auto')) ? String(anrKernelPath || 'auto') : 'auto';
+      const nrFgIniText = [
+        '; ANR FG (Apex Neural Rendering). Managed by DLSS 5 Swapper Enhanced.',
+        'build = user',
+        `path = ${safeKernelPath}`,
+        'model_size = large',
+        'model_note = ANR FG',
+        'nits_per_unit = 80',
+        'max_generated = 5',
+        `scene_cut = ${anrSceneCut === false ? '0' : '1'}`,
+        ''
+      ].join('\r\n');
+      await apply.writeTracked(
+        manifest,
+        gameDir,
+        path.join(destAnrCustom, 'dlssg', 'nr_fg.ini'),
+        nrFgIniText,
+        { kind: 'config' }
+      );
+
+      // 生成 OptiScaler.ini（挂载 Apex Neural Rendering FG、强制覆盖目标插帧倍率 2X~6X、链式加载 ReShade64.dll）
+      let optiText = fs.existsSync(optiIniPath)
+        ? feederConfig.readText(optiIniPath)
+        : feederConfig.readText(path.join(anrBase, 'game', 'OptiScaler.ini'));
+      const optiPairs = [
+        ['FrameGen', 'FGInput', 'nvngxfg'],
+        ['FrameGen', 'FGOutput', 'auto'],
+        ['FrameGen', 'FGNvngxReplacement', 'Apex Neural Rendering FG'],
+        ['DLSSG', 'InterpolationCount', String(multiplier - 1)],
+        ['DLSSG', 'OverrideInterpolationCount', 'true'],
+        ['Plugins', 'LoadReshade', shouldChainReShade ? 'true' : 'false'],
+        ['Plugins', 'LoadAsiPlugins', 'false'],
+        ['ProcessFilter', 'TargetProcessName', path.basename(exePath)],
+        ['Hotfix', 'CheckForUpdate', 'false'],
+        ['Log', 'LogToFile', 'true'],
+        ['Log', 'LogLevel', '2']
+      ];
+      for (const [sec, key, val] of optiPairs) {
+        optiText = feederConfig.setIni(optiText, sec, key, val);
+      }
+      await apply.writeTracked(manifest, gameDir, optiIniPath, optiText, { kind: 'config' });
+
+      onLog({
+        code: 'mfgConfigured',
+        params: { backend: 'anr-fg', mode, multiplier, proxy: anrProxyName, chainedReShade: shouldChainReShade, hardwareProfile }
+      });
+
+      manifest.hardwareProfile = hardwareProfile;
+      manifest.mfg = {
+        mode,
+        multiplier,
+        backend: 'anr-fg',
+        proxy: anrProxyName,
+        chainedReShade: shouldChainReShade,
+        sceneCut: anrSceneCut !== false,
+        kernelPath: safeKernelPath,
+        runtimeStack: effectiveStack,
+        hardwareProfile,
+        updatedAt: new Date().toISOString()
+      };
+      await apply.saveActiveManifest(gameDir, manifest);
+
+      return {
+        ok: true,
+        mode,
+        multiplier,
+        backend: 'anr-fg',
+        proxy: anrProxyName,
+        chainedReShade: shouldChainReShade,
+        sceneCut: anrSceneCut !== false,
+        runtimeStack: effectiveStack,
+        hardwareProfile,
+        // 严守原则：安装完成时尚未运行游戏产生 nr_fg-*.log，一律标记为实验性支持
+        status: 'experimental',
+        statusBadge: `实验性支持 (ANR ${mode.toUpperCase()} · 待进入游戏验证)`
+      };
+    }
+
+    // 1b. 确保 NVIDIA 原生 MFG 模式具备支持 x2/x3/x4 的正版 nvngx_dlssg.dll (310.9.16.0)
     if (upgradeDlssg && effectivePayloadDir) {
-      // MFGAdaUnlock-RenoDx v1.4.4 专为 DLSS-G 310.9.16.0 构建；
+      // MFGAdaUnlock-RenoDx v1.5.5 专为 DLSS-G 310.9.16.0 构建；
       // 仅升级 NGX C ABI 兼容的 nvngx_dlssg.dll (310.9.16.0)，严禁覆盖游戏自带的 sl.dlss_g.dll / sl.reflex.dll / sl.pcl.dll，
       // 否则当游戏自带旧版 sl.common.dll (如 HITMAN 3 的 Streamline 2.2.0.0) 时会因 C++ 插件结构体 ABI 不匹配在 sl.common.dll+0x47932 崩溃！
       const dlssgEnh = path.join(effectivePayloadDir, 'enhanced', 'streamline-2.14.16', 'nvngx_dlssg.dll');
@@ -950,5 +1518,6 @@ module.exports = {
   verifyMfgRuntimeStatus,
   readCurrentMfgConfiguration,
   inspectGameMfgStatus,
+  cleanupAnrFgInstallation,
   applyMfgConfiguration
 };

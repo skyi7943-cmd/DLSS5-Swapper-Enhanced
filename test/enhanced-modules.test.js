@@ -782,12 +782,13 @@ test('v2.3.3 桌面端纯净度守卫、游戏内 Home 菜单参数防覆盖与 
   const mainJs = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
   const preloadJs = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
 
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(uiJs.includes('enh-tuning-card'), false, '桌面 UI 不应渲染单层调优卡片');
   assert.equal(uiJs.includes('data-tune-slider'), false, '桌面 UI 不应渲染调优滑块');
   assert.equal(uiCss.includes('.enh-tuning-card'), false, '桌面 CSS 不应残留单层调优样式');
   assert.equal(mainJs.includes('enhanced-apply-tuning'), false, '主进程不应暴露桌面调优 IPC');
   assert.equal(preloadJs.includes('enhancedApplyTuning'), false, '预加载脚本不应暴露桌面调优 API');
-  assert.equal(uiJs.includes('ENHANCED v2.3.3'), true, '界面徽章应更新为 ENHANCED v2.3.3');
+  assert.equal(uiJs.includes(`ENHANCED v${pkg.version}`), true, `界面徽章应同步更新为 ENHANCED v${pkg.version}`);
 
   // 2. C++ 游戏内 Home 插件源码严禁直接调用按值返回 ImVec2/ImVec4 的 ImGui 函数（防止 MinGW/MSVC sret 寄存器不匹配导致按 Home 闪退）
   const cppSrc = fs.readFileSync(path.join(ROOT, 'overlay', 'zh-cn-overlay.cpp'), 'utf8');
@@ -866,6 +867,213 @@ test('v2.3.3 桌面端纯净度守卫、游戏内 Home 菜单参数防覆盖与 
   assert.equal(ini.getIni(iniAfter, 'RenoDX.MFGUnlock', 'ForceMultiplier'), '3');
   assert.equal(await backends.restore(gameDir), true);
 });
+
+test('v2.3.4 ANR 超省显存通用多帧生成（实验性）离线完整性、跨厂牌 x2~x6 兼容、串联共存、破解避让与零残留还原验证', async (t) => {
+  const runtimeComponents = require('../src/core/runtime-components');
+  const { scanGame } = require('../src/core/scan');
+  const { writePe } = require('./fixtures/pe');
+
+  const scratchBase = fs.existsSync('E:\\Antigravity_Scratch') ? 'E:\\Antigravity_Scratch' : ROOT;
+  const cacheDir = fs.mkdtempSync(path.join(scratchBase, '.tmp-anr-cache-'));
+  const gameDir = fs.mkdtempSync(path.join(scratchBase, '.tmp-anr-game-'));
+  const reverseDir = fs.mkdtempSync(path.join(scratchBase, '.tmp-anr-reverse-'));
+  const crackDir = fs.mkdtempSync(path.join(scratchBase, '.tmp-anr-crack-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-v234-userdata-'));
+  t.after(() => {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+    fs.rmSync(gameDir, { recursive: true, force: true });
+    fs.rmSync(reverseDir, { recursive: true, force: true });
+    fs.rmSync(crackDir, { recursive: true, force: true });
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  });
+
+  // 1. 离线组件解压、SHA-256 严格校验与代理 DLL 指纹识别
+  const extractedBase = await runtimeComponents.ensureAnrFg(cacheDir);
+  const extractedOptiDll = path.join(extractedBase, 'game', 'dxgi.dll');
+  const extractedAnrDll = path.join(extractedBase, 'game', 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg', 'nvngx_dlssg.dll');
+  assert.equal(fs.existsSync(extractedOptiDll), true);
+  assert.equal(fs.existsSync(extractedAnrDll), true);
+  assert.equal(runtimeComponents.isAnrOptiScalerProxy(extractedOptiDll), true);
+  const anrCheck = mfgManager.inspectDlssgBinary(extractedAnrDll);
+  assert.equal(anrCheck.valid, true);
+  assert.equal(anrCheck.isAnrProvider, true);
+  assert.equal(anrCheck.supportsMfgX5X6, true);
+
+  // 2. 跨显卡架构评估：RTX 40 / RTX 30 / AMD RDNA3 / Intel Arc 均支持 ANR x2~x6，GTX 1060 (无 FP16) 必须诚实拦截
+  for (const gpuName of [
+    'NVIDIA GeForce RTX 4070 Laptop GPU',
+    'NVIDIA GeForce RTX 3060 Ti',
+    'AMD Radeon RX 7800 XT',
+    'Intel Arc B580 Graphics'
+  ]) {
+    const sup = mfgManager.evaluateMfgGpuSupport(gpuName, '617.42', null, 'anr-fg');
+    assert.equal(sup.anrCompatible, true, `${gpuName} 应支持 ANR FG`);
+    assert.equal(sup.modeBadges.x5.status, 'experimental', `${gpuName} 未运行时验证前 x5 应标为实验性支持`);
+    assert.equal(sup.modeBadges.x6.status, 'experimental', `${gpuName} 未运行时验证前 x6 应标为实验性支持`);
+  }
+  const gtx10 = mfgManager.evaluateMfgGpuSupport('NVIDIA GeForce GTX 1060 6GB', '560.94', null, 'anr-fg');
+  assert.equal(gtx10.anrCompatible, false);
+  assert.equal(gtx10.modeBadges.x2.status, 'incompatible', 'GTX 10 系列缺失原生 FP16 应拦截 ANR FG');
+
+  // 3. 显存预算评估：默认原生 MFG 数值 100% 不变，切换 ANR 后插帧显存开销降低 ~62%+ 且支持 x5/x6
+  const nativeVram = combinedManager.estimateVramBudget({
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x4',
+    hardwareProfile: 'rtx40_laptop'
+  });
+  const anrVram = combinedManager.estimateVramBudget({
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x4',
+    mfgBackend: 'anr-fg',
+    hardwareProfile: 'rtx40_laptop'
+  });
+  assert.equal(nativeVram.mfgOverheadMB, 660, '默认原生 MFG 显存预算必须保持 660 MB 不变');
+  assert.equal(anrVram.mfgOverheadMB, 195, 'ANR x4 插帧显存预算应降至约 195 MB');
+  assert.equal(anrVram.level, 'safe', '8GB 笔记本在 ANR x4 + DLSS 5 下显存应回到安全绿区');
+
+  // 4. 联合部署 DLSS 5 + ANR FG (x5)：验证 Apex OptiScaler (dxgi.dll) -> ReShade64.dll 零冲突串联与配置落盘
+  writePe(path.join(gameDir, 'CyberTest64.exe'), { bitness: 64, text: 'D3D12CreateDevice', size: 192 * 1024 });
+  fs.writeFileSync(path.join(gameDir, 'nvngx_dlss.dll'), fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlss.dll')));
+  fs.writeFileSync(path.join(gameDir, 'nvngx_dlssg.dll'), fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlssg.dll')));
+
+  const comboRes = await combinedManager.applyCombinedConfiguration(gameDir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x5',
+    mfgBackend: 'anr-fg',
+    anrSceneCut: true,
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(comboRes.ok, true);
+  assert.equal(runtimeComponents.isAnrOptiScalerProxy(path.join(gameDir, 'dxgi.dll')), true, 'dxgi.dll 应为 Apex OptiScaler');
+  assert.equal(fs.existsSync(path.join(gameDir, 'ReShade64.dll')), true, 'ReShade 应部署为 ReShade64.dll 供 OptiScaler 串联加载');
+  assert.equal(fs.existsSync(path.join(gameDir, 'renodx-dlss5.addon64')), true);
+  assert.equal(fs.existsSync(path.join(gameDir, 'dlss5-zh-cn.addon64')), true);
+  assert.equal(fs.existsSync(path.join(gameDir, 'renodx-mfgunlock.addon64')), false, 'ANR 模式下不应混装原生 MFG 解锁插件');
+
+  const optiIni = fs.readFileSync(path.join(gameDir, 'OptiScaler.ini'), 'utf8');
+  assert.equal(ini.getIni(optiIni, 'FrameGen', 'FGInput'), 'nvngxfg');
+  assert.equal(ini.getIni(optiIni, 'FrameGen', 'FGNvngxReplacement'), 'Apex Neural Rendering FG');
+  assert.equal(ini.getIni(optiIni, 'DLSSG', 'InterpolationCount'), '4', 'x5 对应插帧数 InterpolationCount=4');
+  assert.equal(ini.getIni(optiIni, 'DLSSG', 'OverrideInterpolationCount'), 'true');
+  assert.equal(ini.getIni(optiIni, 'Plugins', 'LoadReshade'), 'true', '必须开启 LoadReshade=true 串联 DLSS 5 与中文 Home 菜单');
+
+  const nrFgIni = fs.readFileSync(path.join(gameDir, 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg', 'nr_fg.ini'), 'utf8');
+  assert.match(nrFgIni, /scene_cut\s*=\s*1/);
+  assert.match(nrFgIni, /max_generated\s*=\s*5/);
+
+  // 确认扫描器不会把 OptiScaler/custom/.../nvngx_dlssg.dll 误判为游戏原厂 DLSS-G 文件
+  const scannedCombo = await scanGame(gameDir);
+  assert.equal(
+    scannedCombo.dlssFiles.some((f) => /optiscaler/i.test(path.relative(gameDir, f.path))),
+    false,
+    'scanGame 必须排除 OptiScaler 子目录下的自定义 nvngx_dlssg.dll'
+  );
+
+  // 5. 模拟运行时生成 nr_fg-001.log 与 OptiScaler.log，验证遥测诚实切换为“已运行时验证”并验证零残留清理
+  const anrLogDir = path.join(gameDir, 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg');
+  fs.writeFileSync(
+    path.join(anrLogDir, 'nr_fg-001.log'),
+    '[ANR] GPU path table: fp16_dp4a\n[ANR] path fp16_dp4a after: 0.42ms\n[ANR] 4 generated frames go through the output pass: ok\n',
+    'utf8'
+  );
+  fs.writeFileSync(
+    path.join(gameDir, 'OptiScaler.log'),
+    '[info] DLSSG Interpolation Count set to: 4\n[info] DispatchCallback frameID: 120, numGeneratedFrames: 4\n',
+    'utf8'
+  );
+  const inspectedLive = await combinedManager.inspectCombinedStatus(gameDir, {
+    hardwareProfile: 'rtx40_laptop',
+    mfgBackend: 'anr-fg',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir,
+    gpuInfo: { gpus: ['NVIDIA GeForce RTX 4070 Laptop GPU'] }
+  });
+  assert.equal(inspectedLive.mfg.currentConfig.backend, 'anr-fg');
+  assert.equal(inspectedLive.mfg.currentConfig.mode, 'x5');
+  assert.equal(inspectedLive.mfg.runtimeVerification.verifiedActive, true);
+  assert.equal(inspectedLive.mfg.runtimeVerification.effectiveMultiplier, 5);
+  assert.equal(inspectedLive.mfg.status, 'verified');
+
+  // 6. 从 ANR 切换回 NVIDIA 原生 MFG 解锁 (x3)：必须自动清理 OptiScaler 并将 ReShade64.dll 还原回 dxgi.dll
+  const switchNative = await combinedManager.applyCombinedConfiguration(gameDir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x3',
+    mfgBackend: 'auto',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(switchNative.ok, true);
+  assert.equal(runtimeComponents.isAnrOptiScalerProxy(path.join(gameDir, 'dxgi.dll')), false, '切回原生 MFG 后 dxgi.dll 应恢复为 ReShade');
+  assert.equal(fs.existsSync(path.join(gameDir, 'ReShade64.dll')), false, 'ReShade64.dll 应已无损迁移回 dxgi.dll');
+  assert.equal(fs.existsSync(path.join(gameDir, 'OptiScaler')), false, 'OptiScaler 目录及运行时日志应彻底清除');
+  assert.equal(fs.existsSync(path.join(gameDir, 'renodx-mfgunlock.addon64')), true);
+
+  // 一键完整还原：除备份历史目录 _DLSS5_Backup 外，游戏目录只剩最初的 3 个原始文件
+  assert.equal(await backends.restore(gameDir), true);
+  assert.deepEqual(
+    fs.readdirSync(gameDir).filter((f) => f !== '_DLSS5_Backup').sort(),
+    ['CyberTest64.exe', 'nvngx_dlss.dll', 'nvngx_dlssg.dll'].sort(),
+    '一键还原后不应遗留任何插件、配置或日志目录'
+  );
+
+  // 7. 逆向安装顺序验证：先单独安装 ANR FG (x4)，随后再单独安装 DLSS 5 神经渲染，自动完成串联
+  writePe(path.join(reverseDir, 'ReverseGame.exe'), { bitness: 64, text: 'D3D12CreateDevice', size: 160 * 1024 });
+  fs.writeFileSync(path.join(reverseDir, 'nvngx_dlss.dll'), fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlss.dll')));
+  fs.writeFileSync(path.join(reverseDir, 'nvngx_dlssg.dll'), fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlssg.dll')));
+
+  await mfgManager.applyMfgConfiguration(reverseDir, {
+    mode: 'x4',
+    backend: 'anr-fg',
+    anrSceneCut: false,
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(runtimeComponents.isAnrOptiScalerProxy(path.join(reverseDir, 'dxgi.dll')), true);
+
+  await combinedManager.applyCombinedConfiguration(reverseDir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(runtimeComponents.isAnrOptiScalerProxy(path.join(reverseDir, 'dxgi.dll')), true, '后装 DLSS 5 不得覆盖已有 ANR dxgi.dll');
+  assert.equal(fs.existsSync(path.join(reverseDir, 'ReShade64.dll')), true, '后装 DLSS 5 应自动部署为 ReShade64.dll');
+  const revOptiIni = fs.readFileSync(path.join(reverseDir, 'OptiScaler.ini'), 'utf8');
+  assert.equal(ini.getIni(revOptiIni, 'Plugins', 'LoadReshade'), 'true', '后装 DLSS 5 必须自动回写 LoadReshade=true');
+  assert.equal(await backends.restore(reverseDir), true);
+
+  // 8. 学习版破解补丁避让验证：dxgi.dll 已被外部补丁占用时，ANR 自动退避至 winmm.dll，绝不覆盖破解文件
+  writePe(path.join(crackDir, 'StudyAction64.exe'), { bitness: 64, text: 'D3D12CreateDevice', size: 160 * 1024 });
+  const crackBytes = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(512, 0x2a), Buffer.from('CODEX_STUDY_DXGI_HOOK')]);
+  fs.writeFileSync(path.join(crackDir, 'dxgi.dll'), crackBytes);
+  fs.writeFileSync(path.join(crackDir, 'nvngx_dlss.dll'), fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlss.dll')));
+
+  const crackRes = await combinedManager.applyCombinedConfiguration(crackDir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x6',
+    mfgBackend: 'anr-fg',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(crackRes.ok, true);
+  assert.deepEqual(fs.readFileSync(path.join(crackDir, 'dxgi.dll')), crackBytes, '严禁覆盖原有的学习版 dxgi.dll 补丁');
+  assert.equal(runtimeComponents.isAnrOptiScalerProxy(path.join(crackDir, 'winmm.dll')), true, 'ANR 应自动退避使用 winmm.dll 注入');
+  assert.equal(fs.existsSync(path.join(crackDir, 'ReShade64.dll')), true);
+  assert.equal(await backends.restore(crackDir), true);
+  assert.deepEqual(fs.readFileSync(path.join(crackDir, 'dxgi.dll')), crackBytes, '还原后原版学习补丁 dxgi.dll 仍完好无损');
+  assert.equal(fs.existsSync(path.join(crackDir, 'winmm.dll')), false);
+});
+
 
 
 

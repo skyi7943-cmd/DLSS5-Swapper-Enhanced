@@ -1,14 +1,33 @@
-<h1 align="center">DLSS 5 Swapper Enhanced (v2.3.0-Enhanced)</h1>
+<h1 align="center">DLSS 5 Swapper Enhanced (v2.3.4-Enhanced)</h1>
 
 <p align="center">
-  <b>最新 DLSS 5 神经渲染 · RTX 40 系列动态多帧生成解锁 & RTX 50 系列原生满血直通 · 100% 离线一键支持 DX8/DX9/DX10/DX11/OpenGL/32位老游戏 · 游戏内 Home 菜单全量零崩溃简体中文化</b><br/>
-  <sub>全面适配 RTX 40 系列笔记本（省显存优化）、RTX 40 系列桌面卡与 RTX 50 系列原生显卡 · 100% 永久免费开源</sub>
+  <b>最新 DLSS 5 神经渲染 · NVIDIA 原生 MFG 解锁 & 「ANR 超省显存通用多帧生成（实验性）」双引擎可选（2X~6X） · 100% 离线一键支持 DX8/DX9/DX10/DX11/OpenGL/32位老游戏 · 游戏内 Home 菜单全量零崩溃简体中文化与实时调参</b><br/>
+  <sub>全面适配 RTX 40 系列笔记本（省显存优化）、RTX 40/50 桌面卡，并通过可选 ANR 引擎拓展支持 GTX 16 / RTX 20·30 / AMD RX / Intel Arc 全系显卡 · 100% 永久免费开源</sub>
 </p>
 
 > [!IMPORTANT]
 > ### 🛡️ 独立开源分支与法律合规声明 (Independent MIT Fork & Non-Affiliation Notice)
 > - **中文声明**：本项目（`DLSS 5 Swapper Enhanced`）是基于原开源版本（`v2.2.9`）在 **MIT 许可证（MIT License）** 不可撤销授权下合法衍生的**独立开源社区分支**，由 `skyi7943-cmd` 独立重构与维护。本项目**与原作者（Rakan Alkhaldi）、任何第三方付费下载网站（如 `dlss5swapper.org` 等收费站点）以及 NVIDIA Corporation 均无任何商业隶属、背书或合作关系**。本项目已彻底移除所有指向原作者私有服务器（`5.rakanki.com`）的网络请求与自动升级逻辑，100% 纯本地离线安全运行，且**永久免费开源**。
 > - **English Legal Notice**: **DLSS 5 Swapper Enhanced** is an independent, non-commercial community fork and derivative work based on the MIT-licensed codebase publicly released prior to v2.2.9. Under copyright law and the explicit terms of the [MIT License](LICENSE), the grant to use, copy, modify, merge, publish, and distribute the MIT-licensed software is perpetual and irrevocable. All original copyright notices (`Copyright (c) 2026 Rakan Alkhaldi`) are preserved in [`LICENSE`](LICENSE). **This project is NOT affiliated with, endorsed by, or connected to the original author, `dlss5swapper.org` (or any third-party paywall website), or NVIDIA Corporation.** All upstream private API servers (`5.rakanki.com`) have been permanently disconnected.
+
+---
+
+## 🔥 v2.3.4 重磅更新：「ANR 超省显存通用多帧生成（实验性）」可选引擎
+
+在完整保留默认黄金方案 **⚡ NVIDIA 原生 MFG 解锁 (`renodx-mfgunlock` v1.5.5 / `MFGUnlocker` v1.7.0)** 的同时，**v2.3.4** 在模块 B 新增了第二套可选多帧生成引擎 —— **🪶 ANR 超省显存通用多帧生成（实验性）**（基于 [`apex-compute/ANR`](https://github.com/apex-compute/ANR) `FG-V.B15` 深度集成）：
+
+| 对比维度 | ⚡ NVIDIA 原生 MFG 解锁（默认主力引擎） | 🪶 ANR 超省显存通用多帧生成（实验性可选引擎） |
+| :--- | :--- | :--- |
+| **底层模型体积与架构** | NVIDIA 原厂 `nvngx_dlssg.dll` (`~20 MB` 级重型 Tensor 光流网络) | **0.17 MB 极致微缩纯神经插帧模型**（无外部光流依赖，直接学习帧间运动与遮挡） |
+| **插帧显存开销（VRAM）** | 1080p/2K/4K 约 **`+340 ~ +820 MB`** | **仅需约 `+130 ~ +235 MB`（4K 实测约 214 MB，立省 ~62%~70% 插帧显存！）** |
+| **支持帧生成倍频** | `Off` / `x2` / `x3` / `x4`（配合动态多帧生成） | **`Off` / `x2` / `x3` / `x4` / `x5` / `x6`（最高一键解锁 6 倍插帧）** |
+| **支持显卡范围** | NVIDIA RTX 40 系列（解锁）& RTX 50 系列（原生直通） | **通吃 GTX 16、RTX 20 / 30 / 40 / 50、AMD RX 5000~9000、Intel Arc A/B 全系支持 FP16/DP4A 的显卡** |
+| **切镜保护与画面特性** | NVIDIA 原厂光学流与硬件 Flip Metering，高速边缘稳定 | **默认开启 `scene_cut=1` 切镜防果冻保护**；适合 8GB 小显存笔记本、RTX 20/30/A卡/I卡用户尝鲜高倍插帧 |
+| **与 DLSS 5 + 中文 Home 菜单共存** | ReShade 单宿主直通加载 | **自动将 ReShade 串联挂载为 `ReShade64.dll` (`LoadReshade=true`)**，与 DLSS 5 神经渲染 + 游戏内 `Home` 实时调参菜单零冲突共存；学习版 `dxgi.dll` 自动退避至 `winmm.dll`，支持一键无损切回原生 MFG 或彻底还原 |
+
+> **v2.3.1 ~ v2.3.3 近期重要进化同步包含**：
+> - **游戏内 `Home` 键单层强效·省卡实时调参器**：彻底解决 MinGW/MSVC `ImVec2` 结构体返回 ABI 不匹配导致的按 `Home` 闪退问题，在游戏内直接实时热调单层 DLSS 5 (`NRPasses=1`) 强度、微结构与工作集分辨率，桌面端再次保存配置自动保留玩家游戏内自定义参数；
+> - **32 位经典老游戏与学习版目录深化支持**：新增 DirectDraw (`DDraw.dll` + `D3DImm.dll`)、dgVoodoo 32 位防 4GB 显存溢出与伪全屏防闪退、Steam 老游戏虚拟注册表免 UAC 预置，以及中文“学习版/免安装游戏”目录自动扫描识别。
 
 ---
 
@@ -90,23 +109,26 @@
 | **硬件档位适配** | 无硬件分级，所有显卡共用一套固定参数 | ✅ **专属三档硬件菜单**：`💻 笔记本 40 系列`（省显存超分优化）、`🖥️ 40 系桌面卡`（满血解锁）、`🔥 50 系列原生卡`（Blackwell 直通） |
 | **DLSS 超分后神经渲染表现** | 旧版默认参数易触发 `pre-v7-migration` 导致 200% 过曝与锐化失真 | ✅ 锁定 **`ConfigVersion=7` + `NRIntensity=1.0` 原生自然画风**，超分后细节通透自然 |
 | **显卡内存（VRAM）节省优化** | 多通道或全尺寸 4-Workset 缓冲易令 8GB/12GB 显卡爆显存掉帧 | ✅ **单通道锁定（省 ~450 MB）+ 笔记本 `0.75x` 边缘感知工作集（再省 ~45% 神经显存）**，帧率稳定不爆显存 |
-| **40 系解锁 & 50 系原生 MFG** | ❌ 不支持帧生成管理 | ✅ **40 系笔记本/桌面卡解锁 x3/x4/动态多帧生成**，**50 系原生调用 Blackwell 硬件 Flip Metering** |
+| **多帧生成（MFG）双引擎架构** | ❌ 不支持帧生成管理 | ✅ **双引擎自由切换**：① **NVIDIA 原生 MFG 解锁**（40 系解锁 x3/x4/动态 MFG，50 系原生直通）；② **ANR 超省显存通用多帧生成（实验性）**（0.17 MB 模型省显存 ~62%，解锁 `2X~6X`，支持 GTX 16 / RTX 20~50 / AMD / Intel） |
 | **跨代际 Streamline 兼容性** | 强行替换 `sl.*.dll` 易导致《杀手 3》等老版 Streamline 游戏崩溃 | ✅ **原厂 `sl.*.dll` 保护与自动版本自愈还原**，通吃 Streamline 2.2 ~ 2.14+ 及 DirectX 12 / Vulkan |
-| **无原生 DLSS 老游戏 & 破解游戏** | 仅基础 Feeder 1.17.0，缺乏 32 位中文面板与破解补丁保护 | ✅ **`dgVoodoo2 + Feeder v1.19.0 + LumeniteFX + host64` 一键全自动部署**，支持破解版旧 DLSS 升级与 `dxgi.dll` 防覆盖保护 |
-| **游戏内 `Home` 菜单全中文汉化** | 大量插件面板为纯英文 | ✅ **`dlss5-zh-cn.addon64` / `dlss5-zh-cn.addon32` 双架构零崩溃内存级全量汉化**（含 32 位并排神经渲染中文控制面板） |
+| **无原生 DLSS 老游戏 & 破解游戏** | 仅基础 Feeder 1.17.0，缺乏 32 位中文面板与破解补丁保护 | ✅ **`dgVoodoo2 + Feeder v1.19.0 + LumeniteFX + host64` 一键全自动部署**，支持 32位 DDraw/DX8/DX9、破解版旧 DLSS 升级与 `dxgi.dll` 防覆盖保护 |
+| **游戏内 `Home` 菜单全中文汉化与实时调参** | 大量插件面板为纯英文 | ✅ **`dlss5-zh-cn.addon64` / `dlss5-zh-cn.addon32` 双架构零崩溃内存级全量汉化 + 单层强效·省卡实时调参器**（含 32 位并排神经渲染中文控制面板） |
 
 ---
 
 ## 五、快速使用指南
 
 ### 1. 支持原生 DLSS 的新游戏（DirectX 12 / Vulkan）
-1. 前往 **[Releases](../../releases)** 下载并运行最新便携版 **`DLSS5-Swapper-Enhanced-2.3.0-portable.exe`**。
+1. 前往 **[Releases](../../releases)** 下载并运行最新安装包 **`DLSS5-Swapper-Enhanced-Setup-2.3.4.exe`** 或免安装便携版 **`DLSS5-Swapper-Enhanced-2.3.4-portable.exe`**。
 2. 在左侧选中目标游戏，在顶部切换适合您显卡的硬件档位（**`💻 笔记本 40 系列`** / **`🖥️ 40 系桌面卡`** / **`🔥 50 系列桌面卡`**）。
-3. 点击下方极简三键中的任意一项：
+3. 在模块 B 可自由选择多帧生成引擎：
+   - **⚡ NVIDIA 原生 MFG 解锁**（RTX 40/50 追求极致稳重画质首选，支持 `x2 / x3 / x4`）；
+   - **🪶 ANR 超省显存通用多帧生成（实验性）**（8GB 显存紧缺笔记本、RTX 20/30 或 AMD/Intel 显卡尝鲜首选，支持 `x2 ~ x6` 超高倍频与切镜保护，立省 ~62% 插帧显存）。
+4. 点击下方极简三键中的任意一项：
    - **🚀 同时载入 DLSS 5 + MFG 多帧生成**（推荐）
    - **🧠 单独载入 DLSS 5 神经渲染**
    - **⚡ 单独载入 MFG 多帧生成**
-4. 启动游戏，在游戏自带设置中开启 **DLSS 超分辨率** 与 **DLSS 帧生成**；按 **`Home` 键** 即可呼出全中文实时调参菜单，按 **`F6` 键** 可随时开关对比神经渲染效果。
+5. 启动游戏，在游戏自带设置中开启 **DLSS 超分辨率** 与 **DLSS 帧生成**；按 **`Home` 键** 即可呼出全中文实时调参菜单（若启用了 ANR 引擎，按 **`Insert` 键** 还可额外呼出 OptiScaler 帧生成监控面板），按 **`F6` 键** 可随时开关对比神经渲染效果。
 
 ### 2. 没有原生 DLSS 的经典老游戏 / 破解版游戏如何开启 DLSS 5 神经渲染？
 - **纯老游戏（32/64 位 DX8 / DX9 / DX10 / DX11 / OpenGL，如《罪恶都市》、《圣安地列斯》、《马克思佩恩 2》、《黑手党 II》等）**：直接在左侧选中游戏（或点击左下角 `+` 添加游戏目录），点击 **“🧠 单独载入 DLSS 5 神经渲染”**（或一键应用），软件会自动为您部署 `dgVoodoo2`、`Feeder 1.19.0`、`LumeniteFX/VORT` 光流着色器、`host64` 64 位神经渲染宿主以及 32/64 位双架构中文面板插件，进游戏按 `Home` 键即可实时调节 DLSS 5 神经渲染光影强度与风格！
@@ -141,4 +163,4 @@ npx.cmd electron-builder --win portable
   - 本仓库系独立维护的开源衍生版本，与原作者个人及 `dlss5swapper.org` 等任何第三方收费网站无任何关联；
   - 软件已完全切断外部私有 API 通信，不收集任何用户数据，100% 纯本地运行。
 - **第三方组件致谢与许可证**（详见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)）：
-  - **ReShade** (`BSD-3-Clause`) · **MFGAdaUnlock-RenoDx** (`MIT License`) · **OptiScaler** (`GPL-3.0`) · **NVIDIA NGX / DLSS / Streamline Runtime DLLs**（归 NVIDIA Corporation 所有）。
+  - **ReShade** (`BSD-3-Clause`) · **MFGAdaUnlock-RenoDx** (`MIT License`) · **MFG-Unlocker** (`MIT License`) · **Apex Neural Rendering FG (`ANR FG V.B15`)** · **OptiScaler** (`GPL-3.0`) · **NVIDIA NGX / DLSS / Streamline Runtime DLLs**（归 NVIDIA Corporation 所有）。

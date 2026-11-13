@@ -62,11 +62,21 @@ function assertAntiCheatConsent(gameDir, exePath, acknowledged) {
 }
 function assertLoaderCompatible(config, manifest) {
   const { gameDir, exePath, api, bitness, route, reshadeProxy } = config;
+  const { isAnrOptiScalerProxy } = require('./runtime-components');
   const dir = path.dirname(exePath);
   const legacy = api === 'd3d8' || api === 'd3d9' || api === 'ddraw';
+  const cleanProxy = String(reshadeProxy || '').replace(/\.dll$/i, '').toLowerCase();
   const hook = api === 'opengl'
     ? 'opengl32.dll'
-    : (String(reshadeProxy || '').replace(/\.dll$/i, '').toLowerCase() === 'd3d11' ? 'd3d11.dll' : 'dxgi.dll');
+    : cleanProxy === 'd3d11'
+      ? 'd3d11.dll'
+      : cleanProxy === 'd3d12'
+        ? 'd3d12.dll'
+        : cleanProxy === 'dinput8'
+          ? 'dinput8.dll'
+          : cleanProxy === 'reshade64'
+            ? 'reshade64.dll'
+            : 'dxgi.dll';
   const owned = new Set([...(manifest?.added || []), ...(manifest?.replaced || []).map(item => item.rel)]
     .filter(item => typeof item === 'string').map(item => item.replace(/\\/g, '/').toLowerCase()));
   const reshade = inspectReShade(dir);
@@ -82,6 +92,7 @@ function assertLoaderCompatible(config, manifest) {
     if (pe.versionMentions(file, 'ReShade') && ++reshadeHooks > 1) throw problem('errLoaderConflict', 'Multiple ReShade hooks: ' + dir);
     const key = path.relative(gameDir, file).replace(/\\/g, '/').toLowerCase();
     if (owned.has(key)) continue;
+    if (isAnrOptiScalerProxy(file)) continue;
     // A Vulkan translation layer deliberately retains DirectX DLL names.
     // ReShade's Vulkan route does not replace these files. Recognize the
     // wrapper's contents, not just its name; unrelated injectors stay blocked.

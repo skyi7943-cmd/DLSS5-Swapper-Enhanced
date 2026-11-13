@@ -99,16 +99,18 @@ function resolveHardwareProfile(requestedProfile, gpuName = '', manifestProfile 
   return 'rtx40_laptop';
 }
 
-// 评估在各硬件档位（笔记本 40 系列 8GB / 40 系桌面卡 / 50 系桌面卡）下同时或单独开启 DLSS 5 与 MFG 的显存预算
+// 评估在各硬件档位（笔记本 40 系列 8GB / 40 系桌面卡 / 50 系桌面卡）下同时或单独开启 DLSS 5 与 MFG / ANR FG 的显存预算
 function estimateVramBudget({
   neuralMode = 'off',
   neuralModelId = '310.8.SF-v2',
   mfgMode = 'off',
+  mfgBackend = 'auto',
   vramTotalMB = 8188,
   resolution = '1920x1080',
   hardwareProfile = 'rtx40_laptop',
   singlePassTuning: tuningInput = null
 } = {}) {
+  const isAnrBackend = mfgBackend === 'anr-fg';
   const normTuning = tuningInput
     ? (tuningInput.metrics ? tuningInput : singlePassTuning.normalizeSinglePassTuning(tuningInput, hardwareProfile))
     : null;
@@ -127,9 +129,14 @@ function estimateVramBudget({
       }
     }
     let mfgOverheadMB = 0;
-    if (mfgMode === 'x2') mfgOverheadMB = 420;
-    else if (mfgMode === 'x3') mfgOverheadMB = 620;
-    else if (mfgMode === 'x4') mfgOverheadMB = 820;
+    if (isAnrBackend) {
+      const anrDesktopCurve = { x2: 160, x3: 195, x4: 225, x5: 250, x6: 270 };
+      mfgOverheadMB = anrDesktopCurve[mfgMode] || 0;
+    } else {
+      if (mfgMode === 'x2') mfgOverheadMB = 420;
+      else if (mfgMode === 'x3') mfgOverheadMB = 620;
+      else if (mfgMode === 'x4') mfgOverheadMB = 820;
+    }
 
     const totalAddedOverheadMB = neuralOverheadMB + mfgOverheadMB;
     const estimatedTotalMB = baseGame1080pMB + totalAddedOverheadMB;
@@ -142,6 +149,9 @@ function estimateVramBudget({
     if (headroomMB < 800) {
       level = 'caution';
       summary = `[${profileLabel}] DLSS 5 100% 满血画质 (+${neuralOverheadMB} MiB) + MFG ${mfgMode} (+${mfgOverheadMB} MiB) 合计增加 +${totalAddedOverheadMB} MiB 显存开销，剩余显存裕量约 ${headroomMB} MiB，4K 极限画质下建议配合 DLSS Quality 模式。`;
+    }
+    if (isAnrBackend && mfgMode !== 'off') {
+      summary += ` [已启用 ANR 超省显存通用多帧生成 (${mfgMode.toUpperCase()})：0.17 MB 微缩模型仅需 +${mfgOverheadMB} MiB 显存，相比原版省显存约 62%！]`;
     }
     if (hasActiveTuning && neuralMode !== 'off') {
       summary += ` [已启用单层调优「${normTuning.presetLabel}」：工作分辨率 ${normTuning.workResolution}% · 像素推理开销 -${normTuning.metrics.pixelComputeSavedPercent}%]`;
@@ -159,12 +169,13 @@ function estimateVramBudget({
       usagePercent,
       level,
       hardwareProfile,
+      mfgBackend: isAnrBackend ? 'anr-fg' : 'auto',
       singlePassTuning: normTuning,
       summary
     };
   }
 
-  // 笔记本 40 系列默认黄金档位（未启用自定义单层调优时保持 100% 原封不动）
+  // 笔记本 40 系列默认黄金档位（未启用自定义单层调优或 ANR 时保持 100% 原封不动）
   const baseGame1080pMB = 5400; // 1080p 现代 DX12 游戏典型显存基准
   let neuralOverheadMB = 0;
   if (neuralMode !== 'off') {
@@ -175,9 +186,14 @@ function estimateVramBudget({
   }
 
   let mfgOverheadMB = 0;
-  if (mfgMode === 'x2') mfgOverheadMB = 340;
-  else if (mfgMode === 'x3') mfgOverheadMB = 510;
-  else if (mfgMode === 'x4') mfgOverheadMB = 660;
+  if (isAnrBackend) {
+    const anrLaptopCurve = { x2: 130, x3: 165, x4: 195, x5: 215, x6: 235 };
+    mfgOverheadMB = anrLaptopCurve[mfgMode] || 0;
+  } else {
+    if (mfgMode === 'x2') mfgOverheadMB = 340;
+    else if (mfgMode === 'x3') mfgOverheadMB = 510;
+    else if (mfgMode === 'x4') mfgOverheadMB = 660;
+  }
 
   const totalAddedOverheadMB = neuralOverheadMB + mfgOverheadMB;
   const estimatedTotalMB = baseGame1080pMB + totalAddedOverheadMB;
@@ -192,6 +208,9 @@ function estimateVramBudget({
   } else if (headroomMB < 1000 && totalAddedOverheadMB > 800) {
     level = 'caution';
     summary = `提示：DLSS 5 (+${neuralOverheadMB} MiB) + MFG ${mfgMode} (+${mfgOverheadMB} MiB) 合计增加 +${totalAddedOverheadMB} MiB 显存占用（预计总计 ~${estimatedTotalMB}/${vramTotalMB} MiB）。在 RTX 40 系列笔记本 8GB 省显存优化管线 (0.75x 神经工作集 + 边缘感知上采样) 下可稳定运行，建议配合 DLSS 超分辨率质量档以获得更佳显存裕量。`;
+  }
+  if (isAnrBackend && mfgMode !== 'off') {
+    summary += ` [已启用 ANR 超省显存通用多帧生成 (${mfgMode.toUpperCase()})：0.17 MB 微缩模型仅需 +${mfgOverheadMB} MiB 显存，相比原版大幅省显存约 62%，8GB 笔记本显存极其宽裕！]`;
   }
   if (hasActiveTuning && neuralMode !== 'off') {
     summary += ` [已启用单层调优「${normTuning.presetLabel}」：工作分辨率 ${normTuning.workResolution}% · 像素推理开销 -${normTuning.metrics.pixelComputeSavedPercent}%]`;
@@ -209,6 +228,7 @@ function estimateVramBudget({
     usagePercent,
     level,
     hardwareProfile: 'rtx40_laptop',
+    mfgBackend: isAnrBackend ? 'anr-fg' : 'auto',
     singlePassTuning: normTuning,
     summary
   };
@@ -243,37 +263,53 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
   // 2. Streamline、NGX 及注入链是否兼容
   const reshadeIni = path.join(exeDir, 'ReShade.ini');
   const iniText = feederConfig.readText(reshadeIni);
+  const isAnrBackend = mfgStatus.currentConfig?.backend === 'anr-fg' || mfgStatus.mfgBackend === 'anr-fg';
   const runtimeSelectionMode = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode');
-  const slCoherent = !bothActive || !hasReshadeAddonNr || !hasReshadeAddonMfg || runtimeSelectionMode === '1';
+  const slCoherent = isAnrBackend
+    ? (!bothActive || Boolean(mfgStatus.currentConfig?.chainedReShade || scan.chosen?.api === 'vulkan' || !mfgStatus.currentConfig?.installed))
+    : (!bothActive || !hasReshadeAddonNr || !hasReshadeAddonMfg || runtimeSelectionMode === '1');
   const slChainCheck = {
     ok: slCoherent && (mfgStatus.streamline.present || mfgStatus.dlssg.valid || mfgStatus.currentConfig.mode === 'off'),
     runtimeSelectionMode: runtimeSelectionMode || '0',
-    message: bothActive && hasReshadeAddonNr && hasReshadeAddonMfg
-      ? (runtimeSelectionMode === '1'
-        ? 'ReShade 双插件协同正常：RuntimeSelectionMode=1 (LoadFromDllMain) 已开启，确保 MFG 绑定至游戏主 Streamline 上下文，不与 RenoDX DLSS 5 内部 NGX 实例冲突。'
-        : '注意：RenoDX DLSS 5 与 MFGUnlock 同时存在时建议将 RuntimeSelectionMode 设为 1，以防止 NGX 上下文绑定错位。')
-      : '注入链独立或单模块运行，无 NGX 上下文争用。'
+    message: isAnrBackend
+      ? (bothActive
+        ? 'Apex OptiScaler + ReShade64.dll 零冲突链式协同：已启用 LoadReshade=true，DLSS 5 神经渲染 (Home 菜单) 与 ANR 超省显存多帧生成 (Insert 菜单) 独立无争用。'
+        : 'ANR FG 实验性通用多帧生成注入链独立就绪，通过 OptiScaler 接管游戏 DLSS-G 通道。')
+      : (bothActive && hasReshadeAddonNr && hasReshadeAddonMfg
+        ? (runtimeSelectionMode === '1'
+          ? 'ReShade 双插件协同正常：RuntimeSelectionMode=1 (LoadFromDllMain) 已开启，确保 MFG 绑定至游戏主 Streamline 上下文，不与 RenoDX DLSS 5 内部 NGX 实例冲突。'
+          : '注意：RenoDX DLSS 5 与 MFGUnlock 同时存在时建议将 RuntimeSelectionMode 设为 1，以防止 NGX 上下文绑定错位。')
+        : '注入链独立或单模块运行，无 NGX 上下文争用。')
   };
 
   // 3. 神经渲染是否影响运动矢量与补帧质量
   const bamMode = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'BoundaryArtifactMitigationMode');
   const motionVectorCheck = {
     ok: true,
-    mitigationActive: bamMode === '1' || bamMode === '2' || mfgStatus.currentConfig.backend === 'mfg-unlocker-asi',
-    message: bothActive
-      ? 'DLSS 5 神经渲染与 MFG 同时开启：已启用 Boundary Artifact Mitigation (边界伪影缓解) 与 Validated Warp Blend，保护运动矢量与遮挡边缘插值质量。'
-      : '未同时激活双模块，无跨阶段运动矢量耦合影响。'
+    mitigationActive: isAnrBackend || bamMode === '1' || bamMode === '2' || mfgStatus.currentConfig.backend === 'mfg-unlocker-asi',
+    message: isAnrBackend
+      ? (bothActive
+        ? 'DLSS 5 神经渲染与 ANR FG 同时开启：ANR 0.17 MB 微缩模型复用游戏原生运动矢量与深度缓冲，超低显存开销与神经渲染互不抢占。'
+        : 'ANR 超省显存通用多帧生成复用游戏原生运动矢量缓冲，计算开销极低。')
+      : (bothActive
+        ? 'DLSS 5 神经渲染与 MFG 同时开启：已启用 Boundary Artifact Mitigation (边界伪影缓解) 与 Validated Warp Blend，保护运动矢量与遮挡边缘插值质量。'
+        : '未同时激活双模块，无跨阶段运动矢量耦合影响。')
   };
 
   // 4. 多帧生成是否引发闪烁、HUD 异常或拖影
   const qualityGuardMode = feederConfig.getIni(iniText, 'RenoDX.MFGUnlock', 'QualityGuardMode') || '0';
+  const anrSceneCut = mfgStatus.currentConfig?.settings?.sceneCut !== false;
   const hudFlickerCheck = {
     ok: true,
     qualityGuardMode,
-    hdrGameNeedsGuard: Boolean(mfgStatus.knownGame && mfgStatus.knownGame.hdrFix && qualityGuardMode !== '2'),
-    message: mfgStatus.knownGame && mfgStatus.knownGame.hdrFix
-      ? `该游戏在 HDR 下已知存在 UI 分离闪烁风险，当前 QualityGuardMode=${qualityGuardMode} (${qualityGuardMode === '2' ? '已启用 Automatic Guard + UI Composition 修复' : '建议开启 HDR UI 保护模式'})。`
-      : '默认采用 Native HUD/UI 标记直通，兼顾 HUD 清晰度与补帧稳定性。'
+    hdrGameNeedsGuard: !isAnrBackend && Boolean(mfgStatus.knownGame && mfgStatus.knownGame.hdrFix && qualityGuardMode !== '2'),
+    message: isAnrBackend
+      ? (anrSceneCut
+        ? '已开启 ANR 切镜防果冻保护 (scene_cut=1)：镜头切换瞬间自动跳过插值；注：未提供 HUDLess 无 UI 缓冲的少数游戏小地图边缘可能有轻微抖动（公测已知特性）。'
+        : '当前已关闭 ANR 切镜防果冻保护 (scene_cut=0)，如遇镜头切换果冻感建议重新开启。')
+      : (mfgStatus.knownGame && mfgStatus.knownGame.hdrFix
+        ? `该游戏在 HDR 下已知存在 UI 分离闪烁风险，当前 QualityGuardMode=${qualityGuardMode} (${qualityGuardMode === '2' ? '已启用 Automatic Guard + UI Composition 修复' : '建议开启 HDR UI 保护模式'})。`
+        : '默认采用 Native HUD/UI 标记直通，兼顾 HUD 清晰度与补帧稳定性。')
   };
 
   // 5. 是否超过目标显卡档位的显存预算限制
@@ -281,6 +317,7 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     neuralMode: neuralStatus.mode,
     neuralModelId: neuralStatus.currentModel?.id || '310.8.SF-v2',
     mfgMode: mfgStatus.currentConfig.mode,
+    mfgBackend: isAnrBackend ? 'anr-fg' : 'auto',
     vramTotalMB: hardware?.gpu?.vramTotalMB || 8188,
     hardwareProfile,
     singlePassTuning: tuning && tuning.installed ? tuning : null
@@ -375,6 +412,9 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
   if (safeHookInfo.avoidedConflict) {
     dlssCompatSummary += ` 检测到 ${safeHookInfo.avoidedConflict} 被学习补丁/Mod 占用，已自动改用 ${safeHookInfo.hook} 注入以保护补丁。`;
   }
+  if (safeHookInfo.chainedViaOptiScaler) {
+    dlssCompatSummary += ' 已通过 Apex OptiScaler (LoadReshade=true) 链式挂载 ReShade64.dll，实现 DLSS 5 与 ANR 超省显存多帧生成零冲突共存。';
+  }
 
   return {
     bothActive,
@@ -389,13 +429,14 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
       mode: dlssCompatMode,
       summary: dlssCompatSummary,
       hook: safeHookInfo.hook,
-      avoidedConflict: safeHookInfo.avoidedConflict
+      avoidedConflict: safeHookInfo.avoidedConflict,
+      chainedViaOptiScaler: Boolean(safeHookInfo.chainedViaOptiScaler)
     }
   };
 }
 
 // 获取游戏的三大核心模块完整状态与诊断报告（供 UI 面板一次性渲染）
-async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwareProfile } = {}) {
+async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwareProfile, mfgBackend } = {}) {
   const hardware = await detectHardwareEnvironment();
   const gpuName = hardware.gpu.name;
   const driverVersion = hardware.gpu.driver;
@@ -405,7 +446,7 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
   const [scan, neuralStatus, mfgStatus] = await Promise.all([
     scanGame(gameDir),
     neuralModels.inspectGameNeuralStatus(gameDir, { payloadDir, userDataDir, gpuName, hardwareProfile: effectiveProfile }),
-    mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, driverVersion, hardwareProfile: effectiveProfile })
+    mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, driverVersion, hardwareProfile: effectiveProfile, mfgBackend })
   ]);
 
   const tuning = singlePassTuning.inspectGameTuning(gameDir, {
@@ -478,12 +519,15 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
   };
 }
 
-// 联合应用 DLSS 5 神经渲染与 NVIDIA MFG 配置（支持独立控制两个模块，自动处理双插件协同与 Streamline 补齐）
+// 联合应用 DLSS 5 神经渲染与 NVIDIA MFG / ANR FG 配置（支持独立控制两个模块，自动处理双插件协同与 Streamline 补齐）
 async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}) {
   const {
     neuralMode, // 'off' | 'legacy' | 'latest_compatible'
     neuralModelId,
-    mfgMode, // 'off' | 'x2' | 'x3' | 'x4'
+    mfgMode, // 'off' | 'x2' | 'x3' | 'x4' | ('x5' | 'x6' when mfgBackend === 'anr-fg')
+    mfgBackend = 'auto', // 'auto' | 'renodx-mfgunlock' | 'mfg-unlocker-asi' | 'anr-fg'
+    anrSceneCut = true,
+    anrKernelPath = 'auto',
     runtimeStack = 'baseline-310.9.1',
     hdrCompatibility = false,
     ensureStreamline = true,
@@ -746,6 +790,19 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
             await apply.copyTracked(manifest, gameDir, bundledReshade, hookFile, { kind: 'reshade' });
             manifest.reshade.installedByUs = !hookExisted;
             manifest.reshade.file = hookName;
+            if (safeHook.chainedViaOptiScaler && fs.existsSync(path.join(exeDir, 'OptiScaler.ini'))) {
+              const optiIniPath = path.join(exeDir, 'OptiScaler.ini');
+              let optiText = feederConfig.readText(optiIniPath);
+              optiText = feederConfig.setIni(optiText, 'Plugins', 'LoadReshade', 'true');
+              await apply.writeTracked(manifest, gameDir, optiIniPath, optiText, { kind: 'config' });
+            }
+          }
+        } else if (reshadeCheck.file === 'ReShade64.dll' && fs.existsSync(path.join(exeDir, 'OptiScaler.ini'))) {
+          const optiIniPath = path.join(exeDir, 'OptiScaler.ini');
+          let optiText = feederConfig.readText(optiIniPath);
+          if (feederConfig.getIni(optiText, 'Plugins', 'LoadReshade') !== 'true') {
+            optiText = feederConfig.setIni(optiText, 'Plugins', 'LoadReshade', 'true');
+            await apply.writeTracked(manifest, gameDir, optiIniPath, optiText, { kind: 'config' });
           }
         }
 
@@ -902,12 +959,17 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     } else {
       mfgResult = await mfgManager.applyMfgConfiguration(gameDir, {
         mode: mfgMode,
+        backend: mfgBackend || 'auto',
+        anrSceneCut,
+        anrKernelPath,
+        gpuName,
+        driverVersion: hardware.gpu.driver,
         runtimeStack: effectiveRuntimeStack,
         hdrCompatibility,
         upgradeDlssg: true,
         hardwareProfile: effectiveProfile,
         payloadDir: effectivePayloadDir,
-        userDataDir
+        userDataDir: effectiveUserDataDir
       }, onLog);
 
       // 注意：绝不向原本没有 sl.interposer.dll 的游戏强行注入外源 sl.common.dll / sl.dlss_g.dll (2.14.16.0)，

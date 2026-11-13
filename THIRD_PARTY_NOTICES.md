@@ -99,19 +99,34 @@ remain under their own licences.
 
 ## MFGAdaUnlock-RenoDx (Enhanced MFG Add-on)
 
-`renodx-mfgunlock.addon64` (v1.4.4, 2026-10-17) is bundled from:
-https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/v1.4.4
+`renodx-mfgunlock.addon64` (v1.5.5) is bundled from:
+https://github.com/mavismmg/MFGAdaUnlock-RenoDx/releases/tag/v1.5.5
 
 Licensed under the MIT License (Copyright (c) 2026 mavismmg). The full license
 text is included in `payload/enhanced/mfg/licenses/MFGAdaUnlock-RenoDx-LICENSE.txt`.
 
 ## MFG-Unlocker (RTXMFG Universal Unlocker)
 
-`MFGUnlocker.dll` / `MFGUnlocker.asi` (v1.5.0-hotfix.1, 2026-10-15) is bundled from:
-https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.5.0-hotfix.1
+`MFGUnlocker.dll` / `MFGUnlocker.asi` (v1.7.0) is bundled from:
+https://github.com/dashdogy/MFG-Unlocker/releases/tag/v1.7.0
 
 Licensed under the MIT License (Copyright (c) 2026 dashdogy). The full license
 text is included in `payload/enhanced/mfg/licenses/MFG-Unlocker-LICENSE.txt`.
+
+## Apex Neural Rendering Frame Generation (ANR FG Beta V.B15, Optional Engine)
+
+The optional ultra-low-VRAM universal multi-frame generation archive
+(`anr-fg-V.B15-full.zip`, SHA-256 `45969be1cf9916f404c5e7e6999a494619ef167a7fdb7393b2fa3136e9b7160a`)
+is sourced unmodified from the official Apex Neural Rendering release:
+https://github.com/apex-compute/ANR/releases/tag/FG-V.B15
+
+- **ANR FG (`nvngx_dlssg.dll` replacement & Vulkan/D3D12 compute kernels)**:
+  Provided by Apex Compute (`https://github.com/apex-compute/ANR`) under its
+  upstream release terms. Upstream binaries remain unmodified.
+- **Apex OptiScaler (`dxgi.dll` / `OptiScaler`)**:
+  Licensed under the GNU General Public License v3.0 (`GPL-3.0`), retained in
+  the archive (`LICENSES/OptiScaler-GPL-3.0.txt`) and copied into
+  `OptiScaler/licenses/OptiScaler-GPL-3.0.txt` upon deployment.
 
 ## NVIDIA Streamline SDK v2.14.16 & DLSS / DLSS-G 310.9.16.0
 

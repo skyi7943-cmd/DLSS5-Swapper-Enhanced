@@ -297,6 +297,7 @@ function hookForApi(api, proxy) {
     if (cleanProxy === 'd3d11') return 'd3d11.dll';
     if (cleanProxy === 'd3d12') return 'd3d12.dll';
     if (cleanProxy === 'dinput8') return 'dinput8.dll';
+    if (cleanProxy === 'reshade64') return 'ReShade64.dll';
   }
   if (api === 'd3d9') {
     const cleanProxy = String(proxy || '').replace(/\.dll$/i, '').toLowerCase();
@@ -313,10 +314,20 @@ function isForeignProxyDll(filePath) {
 }
 
 function selectSafeReShadeHook(exeDir, api = 'dxgi', apiLabel = '', requestedProxy = 'dxgi') {
+  const { isAnrOptiScalerProxy } = require('./runtime-components');
   // DDraw / D3D8 / D3D9 经 dgVoodoo2 转译为 D3D11 输出，D3D10 原生走 DXGI；
   // ReShade 在这些管线下实际挂载的是 dxgi.dll（或 d3d11.dll），绝不能误检 dgVoodoo 自身的 d3d9.dll/d3d8.dll/ddraw.dll
   const isWrappedLegacy = ['d3d8', 'd3d9', 'ddraw'].includes(api);
   const effectiveApi = (isWrappedLegacy || api === 'd3d10') ? 'dxgi' : api;
+  const anrProxy = ['dxgi.dll', 'winmm.dll', 'version.dll'].find((p) => isAnrOptiScalerProxy(path.join(exeDir, p)));
+  if (anrProxy && effectiveApi === 'dxgi' && !isWrappedLegacy) {
+    return {
+      hook: 'ReShade64.dll',
+      proxy: 'reshade64',
+      avoidedConflict: null,
+      chainedViaOptiScaler: true
+    };
+  }
   const preferred = hookForApi(effectiveApi, requestedProxy);
   const preferredIsForeign = isForeignProxyDll(path.join(exeDir, preferred));
   const existingReShade = inspectReShade(exeDir);
@@ -1222,6 +1233,27 @@ async function restoreFiles(gameDir, manifest, onLog) {
         await journal.capture(gameDir, zhLeftover);
         await fs.promises.unlink(zhLeftover);
       } catch {}
+    }
+  }
+
+  // 清理 ANR FG 与 OptiScaler 在游戏运行期间生成的动态日志文件，确保下方 addedDirs 空目录能够完整回收
+  const anrDlssgDir = path.join(exeDir, 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg');
+  if (fs.existsSync(anrDlssgDir)) {
+    try {
+      for (const entry of fs.readdirSync(anrDlssgDir)) {
+        if (/^nr_fg.*\.log$/i.test(entry)) {
+          const logPath = path.join(anrDlssgDir, entry);
+          await journal.capture(gameDir, logPath).catch(() => {});
+          await fs.promises.unlink(logPath).catch(() => {});
+        }
+      }
+    } catch {}
+  }
+  if (manifest.mfg?.backend === 'anr-fg' || manifest.optiscaler) {
+    const optiLog = path.join(exeDir, 'OptiScaler.log');
+    if (fs.existsSync(optiLog) && !manifest.replaced.some((item) => relKey(item.rel) === relKey(path.relative(gameDir, optiLog)))) {
+      await journal.capture(gameDir, optiLog).catch(() => {});
+      await fs.promises.unlink(optiLog).catch(() => {});
     }
   }
 

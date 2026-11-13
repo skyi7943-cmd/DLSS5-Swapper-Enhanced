@@ -82,6 +82,19 @@ const LUMENITE = {
   sha256: '43220f99fc0ffa0216e01ebd657180f8c9d043c939f760283b896ea257f1b6a2'
 };
 
+// Apex Neural Rendering Frame Generation (ANR FG Beta V.B15)
+// 仅 0.17 MB 神经网络权重的超省显存跨显卡 2X~6X 多帧生成引擎（4K 显存仅 ~214 MB，立省 ~62% 插帧显存）
+const ANR_FG = Object.freeze({
+  version: 'V.B15',
+  archiveName: 'anr-fg-V.B15-full.zip',
+  url: 'https://github.com/apex-compute/ANR/releases/download/FG-V.B15/anr-fg-V.B15-full.zip',
+  sha256: '45969be1cf9916f404c5e7e6999a494619ef167a7fdb7393b2fa3136e9b7160a',
+  optiscalerSha256: '52d7b390b129deb026333835a85cece808cb99ba9201fe58dca9d2d35ac8fd6b',
+  optiscalerSize: 30009856,
+  providerSha256: 'ae7424b87d13a0e3a9a99dd02d1ea35b9de96c2caa9cd4300d73bac5bb0cf4e8',
+  providerSize: 3706880
+});
+
 function digest(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
@@ -179,4 +192,76 @@ async function ensureLumenite(cacheRoot) {
   return root;
 }
 
-module.exports = { DGVOODOO_VERSION: DGVOODOO.version, LUMENITE, DGVOODOO, ensureLumenite, ensureDgVoodoo, missingVCRuntime, digest, download, fetchBytes, fetchVerified, cached };
+function isAnrOptiScalerProxy(filePath) {
+  try {
+    const st = fs.statSync(filePath);
+    if (!st.isFile() || st.size !== ANR_FG.optiscalerSize) return false;
+    return digest(filePath) === ANR_FG.optiscalerSha256;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureAnrFg(cacheRoot) {
+  const base = path.join(path.resolve(cacheRoot), 'components', `anr-fg-${ANR_FG.version}`);
+  const archive = base + '.zip';
+  const marker = path.join(base, '.verified');
+  const optiDll = path.join(base, 'game', 'dxgi.dll');
+  const providerDll = path.join(base, 'game', 'OptiScaler', 'custom', 'Apex Neural Rendering FG', 'dlssg', 'nvngx_dlssg.dll');
+  const optiIni = path.join(base, 'game', 'OptiScaler.ini');
+  const gplTxt = path.join(base, 'LICENSES', 'OptiScaler-GPL-3.0.txt');
+
+  if (
+    fs.existsSync(marker) &&
+    (() => { try { return fs.readFileSync(marker, 'utf8').trim() === ANR_FG.sha256; } catch { return false; } })() &&
+    cached(optiDll, ANR_FG.optiscalerSha256) &&
+    cached(providerDll, ANR_FG.providerSha256) &&
+    fs.existsSync(optiIni) &&
+    fs.existsSync(gplTxt)
+  ) {
+    return base;
+  }
+
+  if (!cached(archive, ANR_FG.sha256)) {
+    try { await fs.promises.unlink(archive); } catch {}
+    const bundled = findBundledComponent(ANR_FG.archiveName, ANR_FG.sha256);
+    if (bundled) {
+      await fs.promises.mkdir(path.dirname(archive), { recursive: true });
+      await fs.promises.copyFile(bundled, archive);
+    } else {
+      await fetchVerified(ANR_FG.url, ANR_FG.sha256, archive);
+    }
+  }
+
+  await fs.promises.rm(base, { recursive: true, force: true });
+  await extractZip(archive, { dir: base });
+  if (
+    pe.getBitness(optiDll) !== 64 ||
+    !cached(optiDll, ANR_FG.optiscalerSha256) ||
+    !cached(providerDll, ANR_FG.providerSha256) ||
+    !fs.existsSync(optiIni) ||
+    !fs.existsSync(gplTxt)
+  ) {
+    throw componentError('errAnrPayload', 'ANR FG archive layout or binary SHA-256 verification failed');
+  }
+  await fs.promises.writeFile(marker, ANR_FG.sha256, 'utf8');
+  return base;
+}
+
+module.exports = {
+  DGVOODOO_VERSION: DGVOODOO.version,
+  LUMENITE,
+  DGVOODOO,
+  ANR_FG,
+  ensureLumenite,
+  ensureDgVoodoo,
+  ensureAnrFg,
+  isAnrOptiScalerProxy,
+  findBundledComponent,
+  missingVCRuntime,
+  digest,
+  download,
+  fetchBytes,
+  fetchVerified,
+  cached
+};

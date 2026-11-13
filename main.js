@@ -2171,16 +2171,20 @@ ipcMain.handle('enhanced-import-model', async (_event, filePath, meta) => {
   }
 });
 
-ipcMain.handle('enhanced-status', async (_event, dir, profileOverride) => {
+ipcMain.handle('enhanced-status', async (_event, dir, profileOrOptions) => {
   if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.existsSync(dir)) {
     return { ok: false, message: '无效的游戏目录' };
   }
   try {
     const state = loadState();
+    const opts = (profileOrOptions && typeof profileOrOptions === 'object')
+      ? profileOrOptions
+      : { hardwareProfile: profileOrOptions };
     return await combinedManager.inspectCombinedStatus(dir, {
       payloadDir: resolvePayloadRoot(),
       userDataDir: app.getPath('userData'),
-      hardwareProfile: profileOverride || state.hardwareProfile
+      hardwareProfile: opts.hardwareProfile || state.hardwareProfile,
+      mfgBackend: opts.mfgBackend || undefined
     });
   } catch (err) {
     return { ok: false, message: err.message };

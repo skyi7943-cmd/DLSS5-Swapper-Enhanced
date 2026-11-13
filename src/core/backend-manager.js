@@ -89,7 +89,7 @@ async function install(config, log = () => {}) {
   if (!core.canWrite(config.gameDir)) throw Object.assign(new Error('errNoWriteAccess'), { code: 'errNoWriteAccess' });
   compatibility.assertAntiCheatConsent(config.gameDir, config.exePath, config.antiCheatAcknowledged);
   const old = readManifest(config.gameDir);
-  const changed = old && (old.route !== config.route || old.game.api !== config.api ||
+  const changed = old && ((old.route && old.route !== config.route) || old.game.api !== config.api ||
     old.game.exe.toLowerCase() !== path.relative(config.gameDir, config.exePath).toLowerCase() ||
     reshadeFileChanged(old, config));
   // Global Vulkan registration has shared ownership. Until an explicit layer

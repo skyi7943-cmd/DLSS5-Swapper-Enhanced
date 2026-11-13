@@ -72,19 +72,72 @@
       const currentMfgMode = status?.mfg?.currentConfig?.mode && status.mfg.currentConfig.mode !== 'off'
         ? status.mfg.currentConfig.mode
         : 'x3';
+      const currentMfgBackend = status?.mfg?.currentConfig?.backend === 'anr-fg'
+        ? 'anr-fg'
+        : 'auto';
+      const currentAnrSceneCut = status?.mfg?.currentConfig?.settings?.sceneCut !== false;
       draftState.set(dir, {
         hardwareProfile: statusProfile,
         neuralMode: currentNrMode,
         neuralModelId: currentModelId,
         runtimeStack: statusProfile === 'rtx50_desktop' ? 'oct2026-310.9.16' : 'baseline-310.9.1',
         mfgMode: currentMfgMode,
+        mfgBackend: currentMfgBackend,
+        anrSceneCut: currentAnrSceneCut,
         hdrCompatibility: false
       });
     }
     const d = draftState.get(dir);
     if (!d.hardwareProfile) d.hardwareProfile = statusProfile;
     if (!d.neuralModelId) d.neuralModelId = status?.neural?.currentModel?.id || '310.8.SF-v2';
+    if (!d.mfgBackend) d.mfgBackend = status?.mfg?.currentConfig?.backend === 'anr-fg' ? 'anr-fg' : 'auto';
+    if (d.anrSceneCut === undefined) d.anrSceneCut = status?.mfg?.currentConfig?.settings?.sceneCut !== false;
     return d;
+  }
+
+  /**
+   * 实时计算当前待应用草稿配置 (Draft) 的显存预算预览（切换 ANR 引擎或倍率时进度条立即响应省显存效果）
+   */
+  function previewDraftVram(draft, status) {
+    const profile = draft.hardwareProfile || status.hardwareProfile || 'rtx40_laptop';
+    const isDesktop = profile === 'rtx40_desktop' || profile === 'rtx50_desktop';
+    const rawTotal = status.hardware?.gpu?.vramTotalMB || 8188;
+    const vramTotalMB = isDesktop
+      ? (rawTotal > 10000 ? rawTotal : (profile === 'rtx50_desktop' ? 16384 : 12288))
+      : rawTotal;
+    const baseMB = isDesktop ? 6800 : 5400;
+    let nrMB = 0;
+    if (draft.neuralMode !== 'off') {
+      nrMB = isDesktop
+        ? (draft.neuralModelId === '310.9.16-oct2026' ? 760 : 920)
+        : (draft.neuralModelId === '310.9.16-oct2026' ? 540 : 680);
+    }
+    let mfgMB = 0;
+    if (draft.mfgBackend === 'anr-fg') {
+      const curve = isDesktop
+        ? { x2: 160, x3: 195, x4: 225, x5: 250, x6: 270 }
+        : { x2: 130, x3: 165, x4: 195, x5: 215, x6: 235 };
+      mfgMB = curve[draft.mfgMode] || 0;
+    } else {
+      const curve = isDesktop
+        ? { x2: 420, x3: 620, x4: 820 }
+        : { x2: 340, x3: 510, x4: 660 };
+      mfgMB = curve[draft.mfgMode] || 0;
+    }
+    const totalAddedOverheadMB = nrMB + mfgMB;
+    const estimatedTotalMB = baseMB + totalAddedOverheadMB;
+    const headroomMB = vramTotalMB - estimatedTotalMB;
+    const usagePercent = Math.min(100, Math.round((estimatedTotalMB / vramTotalMB) * 100));
+    return {
+      resolution: isDesktop ? '2560x1440 (100% 满血工作分辨率)' : '1920x1080',
+      vramTotalMB,
+      neuralOverheadMB: nrMB,
+      mfgOverheadMB: mfgMB,
+      totalAddedOverheadMB,
+      estimatedTotalMB,
+      headroomMB,
+      usagePercent
+    };
   }
 
   /**
@@ -184,13 +237,8 @@
     const mfg = status.mfg || {};
     const diag = status.diagnostics || {};
     const coExec = diag.coExecution || {};
-    const vram = coExec.vramBudget || {
-      estimatedTotalMB: 5400,
-      vramTotalMB: 8188,
-      usagePercent: 66,
-      headroomMB: 2788,
-      totalAddedOverheadMB: 0
-    };
+    const isAnrDraft = draft.mfgBackend === 'anr-fg';
+    const vram = previewDraftVram(draft, status);
     const checks = buildCoExecCheckItems(coExec, activeProfileId);
 
     // 1. Neural Rendering Manager 状态判定
@@ -215,23 +263,29 @@
     const gpuCompatText = `${status.hardware?.gpu?.name || 'RTX 4070 Laptop GPU'} · 目标档位：${activeProfileMeta.label} (${targetArchLabel}) — 已验证可用`;
 
     // 2. Multi Frame Generation Manager 状态判定
-    const mfgBadgeHtml = renderStatusBadge(mfg.status, mfg.statusBadge);
+    const mfgBadgeHtml = isAnrDraft && mfg.currentConfig?.backend !== 'anr-fg'
+      ? renderStatusBadge('experimental', '实验性支持 (待应用 ANR 引擎)')
+      : renderStatusBadge(mfg.status, mfg.statusBadge);
 
     const effectiveMultiplierText = mfg.runtimeVerification?.verifiedActive
-      ? `${mfg.runtimeVerification.effectiveMultiplier}x (运行时日志已确认生效)`
+      ? `${mfg.runtimeVerification.effectiveMultiplier}x (运行时日志已确认生效${mfg.runtimeVerification.anrRuntimeVerified ? ' · ANR FG' : ''})`
       : mfg.currentConfig?.installed
-        ? `已配置 ${mfg.currentConfig.mode} (${mfg.currentConfig.multiplier}x) · 实际生效倍率：${activeProfileId === 'rtx50_desktop' ? 'Blackwell 原生硬件支持' : '尚未测试 (需运行游戏产生日志后验证)'}`
+        ? `已配置 ${mfg.currentConfig.mode} (${mfg.currentConfig.multiplier}x · ${mfg.currentConfig.backend === 'anr-fg' ? 'ANR 超省显存引擎' : 'NVIDIA 原生 MFG'}) · 实际生效倍率：${mfg.currentConfig.backend === 'anr-fg' ? '待运行游戏产生 nr_fg 日志验证' : (activeProfileId === 'rtx50_desktop' ? 'Blackwell 原生硬件支持' : '尚未测试 (需运行游戏产生日志后验证)')}`
         : '未激活 (1x 原始帧输出)';
 
-    const dlssgVerText = mfg.dlssg?.present
-      ? `${mfg.dlssg.version} (${mfg.dlssg.valid ? '原生 NVIDIA NGX DLSS-G' : '非原生 DLL'})`
-      : '未部署 (应用时自动部署 310.9.16.0)';
+    const dlssgVerText = isAnrDraft
+      ? `ANR FG V.B15 (0.17 MB 微缩模型 · 省 62% 显存${mfg.dlssg?.nativeDlssgVersion ? ` · 底层 ${mfg.dlssg.nativeDlssgVersion}` : ''})`
+      : (mfg.dlssg?.present
+        ? `${mfg.dlssg.version} (${mfg.dlssg.valid ? '原生 NVIDIA NGX DLSS-G' : '非原生 DLL'})`
+        : '未部署 (应用时自动部署 310.9.16.0)');
 
-    const mfgSupportedModesText = activeProfileId === 'rtx50_desktop'
-      ? 'Off / x2 (原生支持) / x3 (Blackwell 原生硬件支持) / x4 (Blackwell 原生硬件支持)'
-      : activeProfileId === 'rtx40_desktop'
-        ? 'Off / x2 (原生支持) / x3 (40系桌面低延迟解锁) / x4 (40系桌面低延迟解锁)'
-        : 'Off / x2 (原生支持) / x3 (实验性支持) / x4 (实验性支持)';
+    const mfgSupportedModesText = isAnrDraft
+      ? 'Off / x2 / x3 / x4 / x5 / x6 (实验性公测 · GTX 16 / RTX 20~50 / AMD / Intel 全显卡通吃)'
+      : (activeProfileId === 'rtx50_desktop'
+        ? 'Off / x2 (原生支持) / x3 (Blackwell 原生硬件支持) / x4 (Blackwell 原生硬件支持)'
+        : activeProfileId === 'rtx40_desktop'
+          ? 'Off / x2 (原生支持) / x3 (40系桌面低延迟解锁) / x4 (40系桌面低延迟解锁)'
+          : 'Off / x2 (原生支持) / x3 (实验性支持) / x4 (实验性支持)');
 
     const mfgX3Sub = activeProfileId === 'rtx50_desktop' ? '3帧输出 (原生支持)' : (activeProfileId === 'rtx40_desktop' ? '3帧输出 (桌面满血)' : '3帧输出 (实验性)');
     const mfgX4Sub = activeProfileId === 'rtx50_desktop' ? '4帧输出 (原生支持)' : (activeProfileId === 'rtx40_desktop' ? '4帧输出 (桌面满血)' : '4帧输出 (实验性)');
@@ -239,11 +293,12 @@
     // 3. Compatibility & Diagnostics 状态判定
     const diagBadgeHtml = renderStatusBadge(diag.combinedStatus, diag.combinedBadge);
 
+    const anrVramTag = isAnrDraft && draft.mfgMode !== 'off' ? ` · ANR 超省显存仅 +${vram.mfgOverheadMB} MB (省 ~62%)` : '';
     const vramBoxTitle = activeProfileId === 'rtx50_desktop'
-      ? `RTX 50 系列原生显存预算估算 (${vram.resolution || '2K/4K 100% 满血分辨率'} · 附加开销 +${vram.totalAddedOverheadMB || 0} MB)`
+      ? `RTX 50 系列显存预算实时预览 (${vram.resolution} · 附加开销 +${vram.totalAddedOverheadMB} MB${anrVramTag})`
       : activeProfileId === 'rtx40_desktop'
-        ? `RTX 40 系桌面卡显存预算估算 (${vram.resolution || '2K/4K 100% 满血分辨率'} · 附加开销 +${vram.totalAddedOverheadMB || 0} MB)`
-        : `RTX 40 系列笔记本省显存预算估算 (0.75x 省显存超分管线 · 附加开销 +${vram.totalAddedOverheadMB || 0} MB)`;
+        ? `RTX 40 系桌面卡显存预算实时预览 (${vram.resolution} · 附加开销 +${vram.totalAddedOverheadMB} MB${anrVramTag})`
+        : `RTX 40 系列笔记本省显存实时预览 (0.75x 省显存超分管线 · 附加开销 +${vram.totalAddedOverheadMB} MB${anrVramTag})`;
 
     return `
       <div class="enh-sheet-section" data-enh-dir="${escHtml(dir)}" data-enh-prefix="${escHtml(prefix)}">
@@ -342,58 +397,109 @@
           <section class="enh-card" aria-label="Multi Frame Generation Manager">
             <div class="enh-card-head">
               <div class="enh-card-title">
-                <h4>Multi Frame Generation Manager <small style="font-weight:500;color:var(--muted)">模块 B · 全系 40/50 显卡 x3/x4 多帧生成</small></h4>
-                <p>全面兼容笔记本 40 系列、40 系桌面卡与 50 系列桌面卡的原生 NVIDIA DLSS-G 多帧生成控制器</p>
+                <h4>Multi Frame Generation Manager <small style="font-weight:500;color:var(--muted)">模块 B · 原生 MFG / ANR 超省显存多帧生成</small></h4>
+                <p>支持 NVIDIA 原生 MFG (x2~x4) 与可选「ANR 超省显存通用多帧生成（实验性 · 2X~6X）」双引擎自由切换</p>
               </div>
               ${mfgBadgeHtml}
             </div>
 
+            <div class="enh-control-group">
+              <div class="enh-control-label">
+                <span>多帧生成核心引擎选择 (MFG Engine)</span>
+                <span>${isAnrDraft ? '实验性公测 · 省 62% 显存 · 全显卡通吃' : '默认黄金方案 · NVIDIA 原生光流'}</span>
+              </div>
+              <div class="enh-seg enh-seg-2" role="group" aria-label="MFG Backend Engine">
+                <button type="button" class="enh-seg-btn ${!isAnrDraft ? 'active' : ''}" data-mfg-backend="auto">
+                  <span>⚡ NVIDIA 原生 MFG 解锁</span><small>40/50系硬件光流 · x2~x4 稳定默认</small>
+                </button>
+                <button type="button" class="enh-seg-btn ${isAnrDraft ? 'active' : ''}" data-mfg-backend="anr-fg">
+                  <span>🪶 ANR 超省显存通用多帧生成（实验性）</span><small>0.17MB 模型 · 省 62% 显存 · 全卡 2X~6X</small>
+                </button>
+              </div>
+            </div>
+
             <div class="enh-kv-list">
+              <div class="enh-kv-row"><span class="k">当前已选引擎 (Selected Engine)</span><span class="v">${isAnrDraft ? '🪶 ANR 超省显存通用多帧生成（实验性 · V.B15）' : '⚡ NVIDIA 原生 MFG 解锁 (v1.5.5)'}</span></div>
               <div class="enh-kv-row"><span class="k">当前补帧档位 (MFG Profile)</span><span class="v">${escHtml(activeProfileMeta.label)}</span></div>
               <div class="enh-kv-row"><span class="k">当前显卡 (Current GPU)</span><span class="v">${escHtml(mfg.gpuSupport?.gpuName || 'NVIDIA GeForce RTX 4070 Laptop GPU')}</span></div>
-              <div class="enh-kv-row"><span class="k">DLSS-G 版本 (DLSS-G Version)</span><span class="v mono">${escHtml(dlssgVerText)}</span></div>
+              <div class="enh-kv-row"><span class="k">插帧核心版本 (FG Provider)</span><span class="v mono">${escHtml(dlssgVerText)}</span></div>
               <div class="enh-kv-row"><span class="k">支持模式 (Supported Modes)</span><span class="v">${escHtml(mfgSupportedModesText)}</span></div>
               <div class="enh-kv-row"><span class="k">实际生效倍率 (Effective Multiplier)</span><span class="v">${escHtml(effectiveMultiplierText)}</span></div>
-              <div class="enh-kv-row"><span class="k">当前游戏兼容性 (Game Compatibility)</span><span class="v">${escHtml(mfg.knownGame ? `${mfg.knownGame.title} (${mfg.knownGame.notes})` : '标准 DirectX 12 游戏 (支持 Streamline DLSS-G 注入)')}</span></div>
+              <div class="enh-kv-row"><span class="k">当前游戏兼容性 (Game Compatibility)</span><span class="v">${escHtml(mfg.knownGame ? `${mfg.knownGame.title} (${mfg.knownGame.notes})` : '标准 DirectX 12 / Vulkan 游戏 (支持 DLSS-G 通道接管)')}</span></div>
             </div>
 
             <div class="enh-control-group">
               <div class="enh-control-label">
                 <span>Multi Frame Generation 补帧倍率选择</span>
-                <span>${activeProfileId === 'rtx50_desktop' ? '50系桌面卡原生硬件直通' : (activeProfileId === 'rtx40_desktop' ? '40系桌面卡 V3 高锐度 + 低延迟护栏' : '笔记本 40 系列黄金配置')}</span>
+                <span>${isAnrDraft ? 'ANR 超省显存引擎 · 最高解锁 6X 插帧' : (activeProfileId === 'rtx50_desktop' ? '50系桌面卡原生硬件直通' : (activeProfileId === 'rtx40_desktop' ? '40系桌面卡 V3 高锐度 + 低延迟护栏' : '笔记本 40 系列黄金配置'))}</span>
               </div>
-              <div class="enh-seg enh-seg-4" role="group" aria-label="Multi Frame Generation Mode">
-                <button type="button" class="enh-seg-btn ${draft.mfgMode === 'off' ? 'active' : ''}" data-mfg-mode="off">
-                  <span>Off</span><small>关闭补帧</small>
-                </button>
-                <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x2' ? 'active' : ''}" data-mfg-mode="x2">
-                  <span>x2</span><small>标准 FG (已验证)</small>
-                </button>
-                <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x3' ? 'active' : ''}" data-mfg-mode="x3">
-                  <span>x3</span><small>${escHtml(mfgX3Sub)}</small>
-                </button>
-                <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x4' ? 'active' : ''}" data-mfg-mode="x4">
-                  <span>x4</span><small>${escHtml(mfgX4Sub)}</small>
-                </button>
-              </div>
+              ${isAnrDraft ? `
+                <div class="enh-seg enh-seg-6" role="group" aria-label="ANR Multi Frame Generation Mode">
+                  <button type="button" class="enh-seg-btn ${draft.mfgMode === 'off' ? 'active' : ''}" data-mfg-mode="off">
+                    <span>Off</span><small>关闭</small>
+                  </button>
+                  <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x2' ? 'active' : ''}" data-mfg-mode="x2">
+                    <span>x2</span><small>省显存</small>
+                  </button>
+                  <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x3' ? 'active' : ''}" data-mfg-mode="x3">
+                    <span>x3</span><small>推荐黄金</small>
+                  </button>
+                  <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x4' ? 'active' : ''}" data-mfg-mode="x4">
+                    <span>x4</span><small>高刷畅玩</small>
+                  </button>
+                  <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x5' ? 'active' : ''}" data-mfg-mode="x5">
+                    <span>x5</span><small>五倍实验</small>
+                  </button>
+                  <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x6' ? 'active' : ''}" data-mfg-mode="x6">
+                    <span>x6</span><small>六倍极限</small>
+                  </button>
+                </div>
+              ` : `
+                <div class="enh-seg enh-seg-4" role="group" aria-label="Multi Frame Generation Mode">
+                  <button type="button" class="enh-seg-btn ${draft.mfgMode === 'off' ? 'active' : ''}" data-mfg-mode="off">
+                    <span>Off</span><small>关闭补帧</small>
+                  </button>
+                  <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x2' ? 'active' : ''}" data-mfg-mode="x2">
+                    <span>x2</span><small>标准 FG (已验证)</small>
+                  </button>
+                  <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x3' ? 'active' : ''}" data-mfg-mode="x3">
+                    <span>x3</span><small>${escHtml(mfgX3Sub)}</small>
+                  </button>
+                  <button type="button" class="enh-seg-btn ${draft.mfgMode === 'x4' ? 'active' : ''}" data-mfg-mode="x4">
+                    <span>x4</span><small>${escHtml(mfgX4Sub)}</small>
+                  </button>
+                </div>
+              `}
             </div>
 
             <div class="enh-select-row">
-              <label>
-                <span>帧生成输入源策略 (QualityGuardMode)</span>
-                <select data-enh-field="hdrCompatibility">
-                  <option value="false" ${draft.hdrCompatibility === false ? 'selected' : ''}>原生输入模式 (QualityGuardMode=0 · 推荐绝大多数游戏 · 防止黑屏)</option>
-                  <option value="true" ${draft.hdrCompatibility !== false ? 'selected' : ''}>HDR UI 保护模式 (QualityGuardMode=2 · 仅限开启 HDR 的特定游戏)</option>
-                </select>
-              </label>
+              ${isAnrDraft ? `
+                <label>
+                  <span>ANR 切镜防果冻保护策略 (scene_cut)</span>
+                  <select data-enh-field="anrSceneCut">
+                    <option value="true" ${draft.anrSceneCut !== false ? 'selected' : ''}>开启切镜保护 (scene_cut=1 · 推荐默认 · 镜头切换瞬间自动跳过插值防伪影)</option>
+                    <option value="false" ${draft.anrSceneCut === false ? 'selected' : ''}>关闭切镜保护 (scene_cut=0 · 仅排查频繁误判切镜时使用)</option>
+                  </select>
+                </label>
+              ` : `
+                <label>
+                  <span>帧生成输入源策略 (QualityGuardMode)</span>
+                  <select data-enh-field="hdrCompatibility">
+                    <option value="false" ${draft.hdrCompatibility === false ? 'selected' : ''}>原生输入模式 (QualityGuardMode=0 · 推荐绝大多数游戏 · 防止黑屏)</option>
+                    <option value="true" ${draft.hdrCompatibility !== false ? 'selected' : ''}>HDR UI 保护模式 (QualityGuardMode=2 · 仅限开启 HDR 的特定游戏)</option>
+                  </select>
+                </label>
+              `}
             </div>
 
             <div class="enh-note">
-              <b>档位补帧说明</b>：${escHtml(activeProfileMeta.mfgSummary)}
+              ${isAnrDraft
+                ? '<b>ANR 实验性引擎说明</b>：仅 <b>0.17 MB</b> 神经网络权重，4K 插帧显存仅 ~214 MB（比原版省显存 <b>~62%</b>），通吃 GTX 16 / RTX 20~50 / AMD RX 5000~9000 / Intel Arc 全系显卡！进入游戏开启「DLSS 帧生成」即自动接管（按 <b>Home</b> 调 DLSS 5，按 <b>Insert</b> 可查看 OptiScaler 面板；注：未提供无 UI 缓冲的少数游戏小地图边缘可能有轻微抖动）。'
+                : `<b>档位补帧说明</b>：${escHtml(activeProfileMeta.mfgSummary)}`}
             </div>
 
             <div class="enh-actions-single">
-              <button type="button" class="enh-btn single-load" data-enh-act="apply-mfg">🎯 单独加载 MFG 多帧生成 (${escHtml(draft.mfgMode.toUpperCase())})</button>
+              <button type="button" class="enh-btn single-load" data-enh-act="apply-mfg">${isAnrDraft ? `🪶 单独加载 ANR 超省显存多帧生成 (${escHtml(draft.mfgMode.toUpperCase())} · 实验性)` : `🎯 单独加载 MFG 多帧生成 (${escHtml(draft.mfgMode.toUpperCase())})`}</button>
             </div>
           </section>
 
@@ -444,7 +550,7 @@
             </div>
 
             <div class="enh-master-bar">
-              <button type="button" class="enh-btn master-load" data-enh-act="apply-combined">🚀 同时加载 DLSS 5 + MFG 多帧生成（推荐黄金组合 · ${escHtml(activeProfileMeta.label.split(' ')[1])} · MFG ${escHtml(draft.mfgMode.toUpperCase())}）</button>
+              <button type="button" class="enh-btn master-load" data-enh-act="apply-combined">${isAnrDraft ? `🚀 同时加载 DLSS 5 + ANR 超省显存多帧生成（实验性省显存组合 · ${escHtml(draft.mfgMode.toUpperCase())}）` : `🚀 同时加载 DLSS 5 + MFG 多帧生成（推荐黄金组合 · ${escHtml(activeProfileMeta.label.split(' ')[1])} · MFG ${escHtml(draft.mfgMode.toUpperCase())}）`}</button>
               <button type="button" class="enh-btn danger-restore" data-enh-act="restore-all" ${coExec.backupCheck?.hasManifest ? '' : 'disabled'}>⏪ 一键卸载并恢复游戏原始状态</button>
               <button type="button" class="enh-btn" data-enh-act="refresh-status">🔄 刷新状态</button>
             </div>
@@ -496,6 +602,17 @@
       };
     }
 
+    for (const bBtn of container.querySelectorAll('[data-mfg-backend]')) {
+      bBtn.onclick = async () => {
+        const nextBackend = bBtn.dataset.mfgBackend || 'auto';
+        draft.mfgBackend = nextBackend;
+        if (nextBackend !== 'anr-fg' && (draft.mfgMode === 'x5' || draft.mfgMode === 'x6')) {
+          draft.mfgMode = 'x4';
+        }
+        await refreshContainer(container, dir, draft.hardwareProfile);
+      };
+    }
+
     for (const btn of container.querySelectorAll('[data-mfg-mode]')) {
       btn.onclick = () => {
         draft.mfgMode = btn.dataset.mfgMode;
@@ -508,6 +625,8 @@
         const field = sel.dataset.enhField;
         if (field === 'hdrCompatibility') {
           draft.hdrCompatibility = sel.value === 'true';
+        } else if (field === 'anrSceneCut') {
+          draft.anrSceneCut = sel.value !== 'false';
         } else if (field === 'neuralModelId') {
           draft.neuralModelId = sel.value;
           if (sel.value === '310.8.0-RTX40') draft.neuralMode = 'legacy';
@@ -528,7 +647,8 @@
           neuralModelId: draft.neuralModelId || '310.8.SF-v2',
           ...payload
         };
-        const msg = `Enhanced: 应用配置 [档位=${finalPayload.hardwareProfile}] (Neural=${finalPayload.neuralMode ?? '保持'}, Model=${finalPayload.neuralModelId}, MFG=${finalPayload.mfgMode ?? '保持'})`;
+        const engineTag = finalPayload.mfgBackend === 'anr-fg' ? 'ANR省显存引擎' : 'NVIDIA原生MFG';
+        const msg = `Enhanced: 应用配置 [档位=${finalPayload.hardwareProfile}] (Neural=${finalPayload.neuralMode ?? '保持'}, Model=${finalPayload.neuralModelId}, MFG=${finalPayload.mfgMode ?? '保持'} [${engineTag}])`;
         if (typeof root.jobLog === 'function') root.jobLog(`--- ${msg} ---`);
         if (typeof root.log === 'function') root.log(`${msg} -> ${dir}`);
         const res = await root.lab.enhancedApply(dir, finalPayload);
@@ -540,6 +660,11 @@
             const feederMsg = `Enhanced: 已自动为老游戏离线部署 ${res.feederSummary || 'Feeder + 光流着色器'} + DLSS 5 神经渲染 + 全中文菜单。`;
             if (typeof root.jobLog === 'function') root.jobLog(feederMsg);
             if (typeof root.log === 'function') root.log(feederMsg);
+          }
+          if (res?.mfgResult?.backend === 'anr-fg') {
+            const anrMsg = `Enhanced: 已部署 ANR 超省显存通用多帧生成 (${res.mfgResult.mode?.toUpperCase()} · 代理=${res.mfgResult.proxy || 'dxgi.dll'}${res.mfgResult.chainedReShade ? ' · 已链式挂载 ReShade64.dll' : ''})。`;
+            if (typeof root.jobLog === 'function') root.jobLog(anrMsg);
+            if (typeof root.log === 'function') root.log(anrMsg);
           }
           if (res?.mfgResult?.skipped && res?.mfgResult?.reason) {
             const skipMsg = `提示: ${res.mfgResult.reason}`;
@@ -599,6 +724,8 @@
     if (btnApplyMfg) {
       btnApplyMfg.onclick = () => runAction({
         mfgMode: draft.mfgMode,
+        mfgBackend: draft.mfgBackend || 'auto',
+        anrSceneCut: draft.anrSceneCut !== false,
         runtimeStack: draft.runtimeStack,
         hdrCompatibility: draft.hdrCompatibility,
         hardwareProfile: draft.hardwareProfile
@@ -611,6 +738,7 @@
         draft.mfgMode = 'off';
         return runAction({
           mfgMode: 'off',
+          mfgBackend: draft.mfgBackend || 'auto',
           runtimeStack: draft.runtimeStack,
           hdrCompatibility: draft.hdrCompatibility,
           hardwareProfile: draft.hardwareProfile
@@ -624,6 +752,8 @@
         neuralMode: draft.neuralMode,
         neuralModelId: draft.neuralModelId,
         mfgMode: draft.mfgMode,
+        mfgBackend: draft.mfgBackend || 'auto',
+        anrSceneCut: draft.anrSceneCut !== false,
         runtimeStack: draft.runtimeStack,
         hdrCompatibility: draft.hdrCompatibility,
         hardwareProfile: draft.hardwareProfile
@@ -647,9 +777,13 @@
 
   async function refreshContainer(container, dir, profileOverride) {
     if (!container || !dir) return;
-    const effectiveProfile = profileOverride || draftState.get(dir)?.hardwareProfile || activeGlobalProfile;
+    const existingDraft = draftState.get(dir);
+    const effectiveProfile = profileOverride || existingDraft?.hardwareProfile || activeGlobalProfile;
+    const statusQuery = existingDraft?.mfgBackend
+      ? { hardwareProfile: effectiveProfile, mfgBackend: existingDraft.mfgBackend }
+      : effectiveProfile;
     const [status, modelsInfo] = await Promise.all([
-      root.lab.enhancedStatus(dir, effectiveProfile),
+      root.lab.enhancedStatus(dir, statusQuery),
       cachedModels ? Promise.resolve(cachedModels) : root.lab.enhancedModels(effectiveProfile)
     ]);
     cachedModels = modelsInfo;
@@ -744,8 +878,8 @@
     view.innerHTML = `
       <div class="section-head">
         <div>
-          <h3>DLSS 5 + 全系 40/50 显卡 MFG 增强控制中心 <span class="beta-tag" style="margin-left:8px">ENHANCED v2.3.3</span></h3>
-          <p class="hint">支持【笔记本 40 系列】【40 系桌面卡】【50 系列桌面卡】三档专属调优；进入游戏按 <b>Home</b> 键即可在中文菜单内实时调节一层 DLSS 5 强化与省卡参数</p>
+          <h3>DLSS 5 + 全系 MFG / ANR 超省显存多帧生成控制中心 <span class="beta-tag" style="margin-left:8px">ENHANCED v2.3.4</span></h3>
+          <p class="hint">支持【笔记本 40 系列】【40 系桌面卡】【50 系列桌面卡】三档专属调优，新增可选「ANR 超省显存通用多帧生成（实验性 · 省 62% 显存 · 全显卡通吃 2X~6X）」；游戏内按 <b>Home</b> 键即可实时调节 DLSS 5</p>
         </div>
       </div>
 

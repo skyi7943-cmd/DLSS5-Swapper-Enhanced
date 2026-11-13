@@ -375,17 +375,27 @@ for (const name of ['ReShade64.dll', 'ReShade64.json', 'ReShade32.dll', 'ReShade
 
 await collectFeeder(source);
 
-// 收集增强版新增的组件载荷（MFG 解锁插件、2026年10月 DLSS 310.9.16 / Streamline 2.14.16.0 运行时及 Feeder 1.19.0）
+// 收集增强版新增的组件载荷（MFG 解锁插件、ANR FG V.B15 实验性引擎、2026年10月 DLSS 310.9.16 / Streamline 2.14.16.0 运行时及 Feeder 1.19.0）
 const ENHANCED_CACHE = path.join(ROOT, 'vendor', 'enhanced-cache');
 if (fs.existsSync(ENHANCED_CACHE)) {
-  console.log('\nEnhanced components (MFG Unlockers + DLSS 310.9.16 / SL 2.14.16.0 + Feeder 1.19.0):');
+  console.log('\nEnhanced components (MFG Unlockers v1.5.5/v1.7.0 + ANR FG V.B15 + DLSS 310.9.16 / SL 2.14.16.0 + Feeder 1.19.0):');
   const enhancedDest = path.join(PAYLOAD, 'enhanced');
   const stageIfPresent = (srcRel, destRel) => {
     const src = path.join(ENHANCED_CACHE, srcRel);
     if (fs.existsSync(src)) copyFile(src, path.join(enhancedDest, destRel));
   };
-  stageIfPresent('renodx-mfgunlock-1.4.4.addon64', 'mfg/renodx-mfgunlock.addon64');
-  stageIfPresent('MFGUnlocker-v1.5.0-hotfix.1/MFGUnlocker.dll', 'mfg/MFGUnlocker.dll');
+  stageIfPresent(
+    fs.existsSync(path.join(ENHANCED_CACHE, 'renodx-mfgunlock-1.5.5.addon64'))
+      ? 'renodx-mfgunlock-1.5.5.addon64'
+      : 'renodx-mfgunlock-1.4.4.addon64',
+    'mfg/renodx-mfgunlock.addon64'
+  );
+  stageIfPresent(
+    fs.existsSync(path.join(ENHANCED_CACHE, 'MFGUnlocker-v1.7.0/MFGUnlocker.dll'))
+      ? 'MFGUnlocker-v1.7.0/MFGUnlocker.dll'
+      : 'MFGUnlocker-v1.5.0-hotfix.1/MFGUnlocker.dll',
+    'mfg/MFGUnlocker.dll'
+  );
   stageIfPresent('MFGAdaUnlock-RenoDx-LICENSE.txt', 'mfg/licenses/MFGAdaUnlock-RenoDx-LICENSE.txt');
   stageIfPresent('MFG-Unlocker-LICENSE.txt', 'mfg/licenses/MFG-Unlocker-LICENSE.txt');
   stageIfPresent('nvngx_dlss_310.9.16/nvngx_dlss.dll', 'streamline-2.14.16/nvngx_dlss.dll');
@@ -400,7 +410,7 @@ if (fs.existsSync(ENHANCED_CACHE)) {
     'dlss5-feed.addon64', 'dlss5-feed.addon32', 'dlss5-feed-helper.addon64',
     'Verify-DLSS5Feeder.ps1', 'READ-ME-FIRST.txt',
     'host64/dlss5-feed-host64.exe',
-    'reshade-shaders/Shaders/DLSS5_Feed.fx',
+    'reshade-shaders/Shaders/DLSS5_Feed.fx', 'reshade-shaders/Shaders/DrawText.fxh',
     'layer-x64/VkLayer_feed_vk.dll', 'layer-x64/VkLayer_feed_vk.json', 'layer-x64/run-with-feed-layer.bat',
     'layer-x86/VkLayer_feed_vk32.dll', 'layer-x86/VkLayer_feed_vk32.json', 'layer-x86/run-with-feed-layer32.bat'
   ]) {

@@ -604,9 +604,11 @@ async function scanGame(gameDir) {
               : [{ api: detected.api, label: detected.label }]
       });
     } else if (DLSS_FILE.test(name) || STREAMLINE_FILE.test(name)) {
+      const rel = path.relative(gameDir, full);
+      if (/(?:^|[\\/])optiscaler(?:[\\/]|$)/i.test(rel)) return;
       const item = {
         path: full,
-        rel: path.relative(gameDir, full),
+        rel,
         name,
         version: pe.getFileVersion(full),
         bitness: pe.getBitness(full),

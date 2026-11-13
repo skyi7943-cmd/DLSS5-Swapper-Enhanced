@@ -1,7 +1,7 @@
 {
   "name": "dlss5-swapper-enhanced",
-  "version": "2.3.3",
-  "description": "DLSS 5 Neural Rendering & RTX 40 MFG x3/x4 Manager (Enhanced Edition with 8GB VRAM Optimization & Full Chinese In-Game Overlay)",
+  "version": "2.3.4",
+  "description": "DLSS 5 Neural Rendering, RTX 40/50 MFG x3/x4 & ANR Ultra-Low-VRAM Universal 2X-6X Frame Generation Manager (Enhanced Edition with Full Chinese In-Game Overlay)",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
