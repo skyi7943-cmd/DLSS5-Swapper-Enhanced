@@ -556,6 +556,15 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     targetApiLabel !== 'DirectX 10' &&
     targetApiLabel !== 'DirectX 11';
   const effectiveUserDataDir = userDataDir || path.join(os.homedir(), 'AppData', 'Roaming', 'dlss5-swapper-enhanced');
+  const preConsumerIniPath = targetBitness === 32
+    ? path.join(exeDir, 'host64', 'ReShade.ini')
+    : path.join(exeDir, 'ReShade.ini');
+  const hadPreExistingUserTuning = fs.existsSync(preConsumerIniPath) &&
+    /^\s*NRIntensity\s*=/im.test(feederConfig.readText(preConsumerIniPath));
+  const profileChangedFromPrev = Boolean(prevManifest?.hardwareProfile && prevManifest.hardwareProfile !== effectiveProfile);
+  const preApplyTuningSnapshot = hadPreExistingUserTuning
+    ? singlePassTuning.inspectGameTuning(gameDir, { exeDir, bitness: targetBitness, hardwareProfile: effectiveProfile })
+    : null;
 
   let neuralResult = null;
   let mfgResult = null;
@@ -927,14 +936,17 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
         iniText = feederConfig.setIni(iniText, 'RenoDX.MFGUnlock', 'RuntimeSelectionMode', '1');
       }
       if (hasNrAddon && neuralMode !== 'off') {
+        const hasExistingUserTuning = /^\s*NRIntensity\s*=/im.test(iniText);
         iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'ConfigVersion', '7');
         if (hasNativeStreamline) {
           iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'EnableHooks', '1');
         }
-        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRResolutionScale', isDesktopProfile ? '1' : '0.75');
+        if (!hasExistingUserTuning) {
+          iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRResolutionScale', isDesktopProfile ? '1' : '0.75');
+          iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRMaxWorksets', isDesktopProfile ? '8' : '4');
+        }
         iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRFollowInputRes', '0');
         iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRHookPoint', '0');
-        iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'NRMaxWorksets', isDesktopProfile ? '8' : '4');
         iniText = feederConfig.setIni(iniText, 'RenoDX.DLSS5', 'UiLanguage', 'zh-Hans');
       }
       await apply.writeTracked(manifest, gameDir, reshadeIni, iniText, { kind: 'config' });
@@ -942,16 +954,24 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     });
   }
 
-  // 4. 若指定了单层 DLSS 5 画质强化与省卡调优参数（或清单中已保存用户的单层调优配置），立即同步写入 ReShade.ini / dlss5-feed.cfg / ReShadePreset.ini
+  // 4. 首次部署或切换硬件档位时写入默认一层 DLSS 5 强化与省卡基线（笔记本 75% 省卡强效 / 桌面卡 100% 满血单层强效）；
+  //    若用户已在游戏内 Home 菜单自定义过参数，则重新回写保存的游戏内设置，防止被上方模型重置覆盖
   let tuningResult = null;
-  const effectiveTuningInput = requestedTuning !== undefined
-    ? requestedTuning
-    : (existingManifest?.singlePassTuning || null);
-  if (effectiveTuningInput && neuralMode !== 'off') {
-    tuningResult = await singlePassTuning.applyTuningToGame(gameDir, effectiveTuningInput, {
-      scan,
-      hardwareProfile: effectiveProfile
-    });
+  if (neuralMode !== 'off') {
+    const defaultProfileTuning = isDesktopProfile
+      ? { preset: 'boost_eco', workResolution: 100, maxWorksets: 8, motionCost: 'quality' }
+      : { preset: 'boost_eco', maxWorksets: 4 };
+    const effectiveTuningInput = requestedTuning !== undefined
+      ? requestedTuning
+      : (hadPreExistingUserTuning && !profileChangedFromPrev && preApplyTuningSnapshot
+        ? preApplyTuningSnapshot
+        : defaultProfileTuning);
+    if (effectiveTuningInput) {
+      tuningResult = await singlePassTuning.applyTuningToGame(gameDir, effectiveTuningInput, {
+        scan,
+        hardwareProfile: effectiveProfile
+      });
+    }
   }
 
   const updatedStatus = await inspectCombinedStatus(gameDir, {

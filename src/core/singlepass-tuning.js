@@ -285,6 +285,9 @@ function applyTuningToConsumerIni(iniText, tuningInput, { hardwareProfile = 'rtx
   ];
   if (host) {
     pairs.push(['RenoDX.DLSS5', 'NRToggleKey', '0']);
+  } else {
+    pairs.push(['OVERLAY', 'TutorialProgress', '4']);
+    pairs.push(['OVERLAY', 'UiLanguage', 'zh-Hans']);
   }
 
   for (const [sec, key, val] of pairs) {

@@ -485,6 +485,11 @@ void hook_TableHeader(const char *label) {
 }
 
 bool hook_BeginTabItem(const char *label, bool *p_open, ImGuiTabItemFlags flags) {
+    static bool s_logged_home_open = false;
+    if (!s_logged_home_open && label && strcmp(label, "Home") == 0) {
+        s_logged_home_open = true;
+        reshade::log::message(reshade::log::level::info, "DLSS 5 Swapper Enhanced: ReShade Home menu opened in Chinese.");
+    }
     return g_orig.BeginTabItem(translate_widget_label(label), p_open, flags);
 }
 
@@ -697,6 +702,7 @@ bool parse_float_safe(const std::string &s, float *out) {
 
 #ifdef _WIN64
 struct RenodxLiveAtomics {
+    HMODULE bound_mod = nullptr;
     bool checked = false;
     bool valid = false;
     volatile long *nr_passes = nullptr;
@@ -725,18 +731,36 @@ inline void store_atomic_float(volatile long *dst, float val) {
     _InterlockedExchange(dst, bits);
 }
 
+inline float load_atomic_float(volatile long *src, float fallback) {
+    if (!src) return fallback;
+    long bits = _InterlockedCompareExchange(src, 0, 0);
+    float val = fallback;
+    memcpy(&val, &bits, sizeof(float));
+    return std::isfinite(val) ? val : fallback;
+}
+
 inline void store_atomic_bool(uint8_t *dst, bool val) {
     if (!dst) return;
     __atomic_store_n(dst, static_cast<uint8_t>(val ? 1 : 0), __ATOMIC_SEQ_CST);
 }
 
+inline bool load_atomic_bool(const uint8_t *src, bool fallback) {
+    if (!src) return fallback;
+    return __atomic_load_n(src, __ATOMIC_SEQ_CST) != 0;
+}
+
 bool ensure_renodx_atomics_bound() {
-    if (g_rx_atomics.valid) return true;
-    if (g_rx_atomics.checked) return false;
-
     HMODULE mod = GetModuleHandleW(L"renodx-dlss5.addon64");
-    if (!mod) return false; // 尚未加载完成，稍后重试
+    if (!mod) {
+        g_rx_atomics = {};
+        return false; // 尚未加载完成，稍后重试
+    }
+    if (g_rx_atomics.bound_mod == mod && g_rx_atomics.checked) {
+        return g_rx_atomics.valid;
+    }
 
+    g_rx_atomics = {};
+    g_rx_atomics.bound_mod = mod;
     g_rx_atomics.checked = true;
     auto *base = reinterpret_cast<uint8_t *>(mod);
     auto *dos = reinterpret_cast<IMAGE_DOS_HEADER *>(base);
@@ -818,6 +842,32 @@ void apply_tuner_to_renodx_memory() {
     store_atomic_bool(g_rx_atomics.nr_follow_input_res, false);
     store_atomic_bool(g_rx_atomics.nr_look_mode, g_tuner.look_enabled);
 }
+
+int detect_tuner_preset();
+
+void sync_tuner_from_renodx_memory() {
+    if (!ensure_renodx_atomics_bound()) return;
+    float fv = load_atomic_float(g_rx_atomics.nr_intensity_bits, g_tuner.intensity);
+    if (fv >= 0.4f && fv <= 2.0f) g_tuner.intensity = fv;
+    fv = load_atomic_float(g_rx_atomics.nr_local_structure_bits, g_tuner.structure);
+    if (fv >= 0.4f && fv <= 2.0f) g_tuner.structure = fv;
+    fv = load_atomic_float(g_rx_atomics.nr_local_tone_bits, g_tuner.local_tone);
+    if (fv >= 0.4f && fv <= 2.0f) g_tuner.local_tone = fv;
+    fv = load_atomic_float(g_rx_atomics.nr_look_detail_bits, g_tuner.detail_boost);
+    if (fv >= 0.4f && fv <= 2.0f) g_tuner.detail_boost = fv;
+    fv = load_atomic_float(g_rx_atomics.nr_look_tone_bits, g_tuner.tone_boost);
+    if (fv >= 0.4f && fv <= 2.0f) g_tuner.tone_boost = fv;
+    fv = load_atomic_float(g_rx_atomics.nr_look_colour_bits, g_tuner.color_boost);
+    if (fv >= 0.4f && fv <= 2.0f) g_tuner.color_boost = fv;
+    fv = load_atomic_float(g_rx_atomics.nr_res_scale_bits, static_cast<float>(g_tuner.work_res) / 100.0f);
+    if (fv >= 0.45f && fv <= 1.05f) {
+        g_tuner.work_res = static_cast<int>(std::lround(fv * 100.0f));
+    }
+    const long st = _InterlockedCompareExchange(g_rx_atomics.nr_style, 0, 0);
+    if (st >= 0 && st <= 2) g_tuner.nr_style = static_cast<int>(st);
+    g_tuner.look_enabled = load_atomic_bool(g_rx_atomics.nr_look_mode, g_tuner.look_enabled);
+    g_tuner.preset_idx = detect_tuner_preset();
+}
 #endif
 
 int detect_tuner_preset() {
@@ -841,7 +891,7 @@ void reload_tuner_from_disk(bool sync_memory = false) {
         if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRLookDetail"), &fv) && fv >= 0.4f && fv <= 2.0f) g_tuner.detail_boost = fv;
         if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRLookTone"), &fv) && fv >= 0.4f && fv <= 2.0f) g_tuner.tone_boost = fv;
         if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRLookColour"), &fv) && fv >= 0.4f && fv <= 2.0f) g_tuner.color_boost = fv;
-        if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRStyle"), &fv)) g_tuner.nr_style = static_cast<int>(fv);
+        if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRStyle"), &fv) && fv >= 0.0f && fv <= 2.0f) g_tuner.nr_style = static_cast<int>(fv);
         if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRResolutionScale"), &fv) && fv >= 0.45f && fv <= 1.05f) {
             g_tuner.work_res = static_cast<int>(std::lround(fv * 100.0f));
         }
@@ -910,6 +960,40 @@ void init_singlepass_tuner() {
 
 void persist_tuner_to_disk() {
     char num[32] = {};
+#ifdef _WIN64
+    if (!g_tuner.is_host64) {
+        // 64 位原生进程直接通过 ReShade 官方配置接口写入内存缓存并落盘，避免关闭 Home 菜单时被 ReShade 旧缓存回写覆盖
+        reshade::set_config_value(nullptr, "RenoDX DLSS", "NRPasses", "1");
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "ConfigVersion", "7");
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NeuralUplift", "1");
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRPasses", "1");
+        snprintf(num, sizeof(num), "%.2f", g_tuner.intensity);
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRIntensity", static_cast<const char *>(num));
+        snprintf(num, sizeof(num), "%.2f", g_tuner.structure);
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRLocalStructure", static_cast<const char *>(num));
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRSkinIndependent", g_tuner.structure > 1.001f ? "0" : "1");
+        snprintf(num, sizeof(num), "%.2f", g_tuner.local_tone);
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRLocalTone", static_cast<const char *>(num));
+        snprintf(num, sizeof(num), "%d", g_tuner.nr_style);
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRStyle", static_cast<const char *>(num));
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRLookMode", g_tuner.look_enabled ? "1" : "0");
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRLookStrength", "1");
+        snprintf(num, sizeof(num), "%.2f", g_tuner.detail_boost);
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRLookDetail", static_cast<const char *>(num));
+        snprintf(num, sizeof(num), "%.2f", g_tuner.tone_boost);
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRLookTone", static_cast<const char *>(num));
+        snprintf(num, sizeof(num), "%.2f", g_tuner.color_boost);
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRLookColour", static_cast<const char *>(num));
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRDetailStability", "0");
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRLookUpsample", "1");
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRFollowInputRes", "0");
+        snprintf(num, sizeof(num), "%.2f", static_cast<float>(g_tuner.work_res) / 100.0f);
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRResolutionScale", static_cast<const char *>(num));
+        const int worksets = g_tuner.work_res <= 68 ? 2 : (g_tuner.work_res <= 80 ? 3 : 6);
+        snprintf(num, sizeof(num), "%d", worksets);
+        reshade::set_config_value(nullptr, "RenoDX.DLSS5", "NRMaxWorksets", static_cast<const char *>(num));
+    } else
+#endif
     if (!g_consumer_ini_w.empty()) {
         std::string ini = read_utf8_file_w(g_consumer_ini_w);
         ini_set_kv(ini, "RenoDX DLSS", "NRPasses", "1");
@@ -1022,8 +1106,20 @@ void apply_tuner_preset(int idx) {
     persist_tuner_to_disk();
 }
 
+// 注意：跨 MinGW(x86_64-windows-gnu) 与 MSVC(ReShade64.dll) 调用 ImGui 函数表时，
+// 严禁调用任何按值返回 ImVec2 / ImVec4 (带构造函数非聚合体) 的函数（如 GetContentRegionAvail），
+// 否则 MSVC 期望 RCX 传入隐藏 sret 缓冲区指针而 MinGW 不传，会导致按 Home 键瞬间触发 0xC0000005 闪退！
+// 下方全部使用标量(float/bool/int)或引用(ImGuiStyle&)返回接口，并直接走 g_orig 原始函数表避免重复进入翻译钩子。
 void draw_singlepass_tuner_panel() {
+    const imgui_function_table *tbl = g_table_hooked ? &g_orig : imgui_function_table_instance();
+    if (!tbl) return;
+
     init_singlepass_tuner();
+#ifdef _WIN64
+    if (!g_tuner.is_host64 && !tbl->IsAnyItemActive()) {
+        sync_tuner_from_renodx_memory();
+    }
+#endif
 
     const float ratio = static_cast<float>(g_tuner.work_res) / 100.0f;
     int saved_pct = static_cast<int>(std::lround((1.0f - ratio * ratio) * 100.0f));
@@ -1036,88 +1132,103 @@ void draw_singlepass_tuner_panel() {
         (g_tuner.sharpness > 0.15f ? (g_tuner.sharpness - 0.15f) * 0.20f : 0.0f);
     const int boost_pct = static_cast<int>(std::lround(gain * 100.0f));
 
-    ImGui::TextColored(
-        ImVec4(0.52f, 0.94f, 0.32f, 1.0f),
+    char status_buf[256] = {};
+    snprintf(
+        status_buf,
+        sizeof(status_buf),
         "\xe2\x97\x8f \xe9\x94\x81\xe5\xae\x9a 1 \xe5\xb1\x82\xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93 (NRPasses=1) | \xe8\xb4\xa8\xe6\x84\x9f\xe5\xbc\xba\xe5\x8c\x96: %+d%% | \xe5\x83\x8f\xe7\xb4\xa0\xe7\xae\x97\xe5\x8a\x9b: -%d%% (%d%%)",
         boost_pct, saved_pct, g_tuner.work_res);
+    call_text_colored_v(tbl->TextColoredV, ImVec4(0.52f, 0.94f, 0.32f, 1.0f), "%s", status_buf);
 
-    const float avail_w = ImGui::GetContentRegionAvail().x;
-    const float half_w = avail_w > 220.0f ? (avail_w - ImGui::GetStyle().ItemSpacing.x) * 0.5f : 0.0f;
+    const ImGuiStyle &style = tbl->GetStyle();
+    const float avail_w = tbl->GetWindowWidth() - tbl->GetCursorPosX() - style.WindowPadding.x;
+    const float half_w = avail_w > 220.0f ? (avail_w - style.ItemSpacing.x) * 0.5f : 0.0f;
 
     auto draw_preset_btn = [&](int idx, const char *label) {
         const bool active = (g_tuner.preset_idx == idx);
         if (active) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.56f, 0.12f, 0.92f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.66f, 0.16f, 0.98f));
+            tbl->PushStyleColor2(ImGuiCol_Button, ImVec4(0.24f, 0.56f, 0.12f, 0.92f));
+            tbl->PushStyleColor2(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.66f, 0.16f, 0.98f));
         }
-        if (ImGui::Button(label, ImVec2(half_w, 0.0f))) {
+        if (tbl->Button(label, ImVec2(half_w, 0.0f))) {
             apply_tuner_preset(idx);
         }
         if (active) {
-            ImGui::PopStyleColor(2);
+            tbl->PopStyleColor(2);
         }
     };
 
     draw_preset_btn(0, "[\xe6\x8e\xa8\xe8\x8d\x90] \xe5\x8d\x95\xe5\xb1\x82\xe5\xbc\xba\xe6\x95\x88\xc2\xb7\xe7\x9c\x81\xe5\x8d\xa1 (-44%)###enh_p0");
-    if (half_w > 0.0f) ImGui::SameLine();
+    if (half_w > 0.0f) tbl->SameLine(0.0f, -1.0f);
     draw_preset_btn(1, "[\xe7\x9c\x81\xe5\x8d\xa1] \xe6\x9e\x81\xe8\x87\xb4\xe7\x9c\x81\xe5\x8d\xa1\xc2\xb7\xe9\xab\x98\xe5\xb8\xa7 (-55%)###enh_p1");
 
     draw_preset_btn(2, "[\xe6\xbb\xa1\xe8\xa1\x80] \xe5\x8d\x95\xe5\xb1\x82\xe6\xbb\xa1\xe8\xa1\x80\xc2\xb7\xe6\x9e\x81\xe9\x99\x90 (100%)###enh_p2");
-    if (half_w > 0.0f) ImGui::SameLine();
+    if (half_w > 0.0f) tbl->SameLine(0.0f, -1.0f);
     draw_preset_btn(3, "[\xe5\x9f\xba\xe5\x87\x86] \xe5\x8e\x9f\xe5\x8e\x82\xe6\xa0\x87\xe5\x87\x86 1.0x###enh_p3");
 
-    ImGui::Spacing();
+    tbl->Spacing();
     bool mem_changed = false;
     bool disk_commit = false;
 
-    if (ImGui::SliderFloat("\xe6\x80\xbb\xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe5\xbc\xba\xe5\xba\xa6###enh_s_int", &g_tuner.intensity, 0.50f, 1.80f, "%.2fx")) {
+    if (tbl->SliderFloat("\xe6\x80\xbb\xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe5\xbc\xba\xe5\xba\xa6###enh_s_int", &g_tuner.intensity, 0.50f, 1.80f, "%.2fx", 0)) {
         g_tuner.preset_idx = 4;
         mem_changed = true;
     }
-    if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+    if (tbl->IsItemDeactivatedAfterEdit()) disk_commit = true;
 
-    if (ImGui::SliderFloat("\xe5\xbe\xae\xe8\xa1\xa8\xe9\x9d\xa2\xe7\xbb\x93\xe6\x9e\x84\xe9\x87\x8d\xe5\xa1\x91###enh_s_str", &g_tuner.structure, 0.50f, 1.70f, "%.2fx")) {
+    if (tbl->SliderFloat("\xe5\xbe\xae\xe8\xa1\xa8\xe9\x9d\xa2\xe7\xbb\x93\xe6\x9e\x84\xe9\x87\x8d\xe5\xa1\x91###enh_s_str", &g_tuner.structure, 0.50f, 1.70f, "%.2fx", 0)) {
         g_tuner.preset_idx = 4;
         mem_changed = true;
     }
-    if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+    if (tbl->IsItemDeactivatedAfterEdit()) disk_commit = true;
 
-    if (ImGui::SliderFloat("\xe7\xb2\xbe\xe7\xbb\x86\xe7\xbb\x86\xe8\x8a\x82\xe5\xa1\x91\xe5\xbd\xa2 (\xe9\x9b\xb6\xe8\x80\x97\xe6\x97\xb6)###enh_s_det", &g_tuner.detail_boost, 0.50f, 1.80f, "%.2fx")) {
+    if (tbl->SliderFloat("\xe7\xb2\xbe\xe7\xbb\x86\xe7\xbb\x86\xe8\x8a\x82\xe5\xa1\x91\xe5\xbd\xa2 (\xe9\x9b\xb6\xe8\x80\x97\xe6\x97\xb6)###enh_s_det", &g_tuner.detail_boost, 0.50f, 1.80f, "%.2fx", 0)) {
         g_tuner.preset_idx = 4;
         g_tuner.look_enabled = (std::fabs(g_tuner.detail_boost - 1.0f) > 0.01f) || (std::fabs(g_tuner.tone_boost - 1.0f) > 0.01f);
         mem_changed = true;
     }
-    if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+    if (tbl->IsItemDeactivatedAfterEdit()) disk_commit = true;
 
-    if (ImGui::SliderFloat("\xe5\xb1\x80\xe9\x83\xa8\xe5\x85\x89\xe5\xbd\xb1\xe7\xab\x8b\xe4\xbd\x93\xe6\x84\x9f###enh_s_ton", &g_tuner.local_tone, 0.50f, 1.60f, "%.2fx")) {
+    if (tbl->SliderFloat("\xe5\xb1\x80\xe9\x83\xa8\xe5\x85\x89\xe5\xbd\xb1\xe7\xab\x8b\xe4\xbd\x93\xe6\x84\x9f###enh_s_ton", &g_tuner.local_tone, 0.50f, 1.60f, "%.2fx", 0)) {
         g_tuner.preset_idx = 4;
         mem_changed = true;
     }
-    if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+    if (tbl->IsItemDeactivatedAfterEdit()) disk_commit = true;
 
-    if (ImGui::SliderInt("\xe5\x86\x85\xe9\x83\xa8\xe5\xb7\xa5\xe4\xbd\x9c\xe5\x88\x86\xe8\xbe\xa8\xe7\x8e\x87 (\xe7\x9c\x81\xe5\x8d\xa1)###enh_s_res", &g_tuner.work_res, 50, 100, "%d%%")) {
+    if (tbl->SliderInt("\xe5\x86\x85\xe9\x83\xa8\xe5\xb7\xa5\xe4\xbd\x9c\xe5\x88\x86\xe8\xbe\xa8\xe7\x8e\x87 (\xe7\x9c\x81\xe5\x8d\xa1)###enh_s_res", &g_tuner.work_res, 50, 100, "%d%%", 0)) {
         g_tuner.preset_idx = 4;
         mem_changed = true;
     }
-    if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+    if (tbl->IsItemDeactivatedAfterEdit()) disk_commit = true;
+
+    static const char *kStyleItems[] = {
+        "\xe5\x8e\x9f\xe7\x94\xbb\xe7\x9b\xb4\xe5\x87\xba (\xe5\xbf\xa0\xe5\xae\x9e\xe5\x8e\x9f\xe8\xb2\x8c)",
+        "\xe8\x87\xaa\xe7\x84\xb6\xe8\xb4\xa8\xe6\x84\x9f (\xe7\xab\x8b\xe4\xbd\x93\xe6\x8e\xa8\xe8\x8d\x90)",
+        "\xe7\x94\xb5\xe5\xbd\xb1\xe8\x83\xb6\xe7\x89\x87 (\xe9\xab\x98\xe5\x8f\x8d\xe5\xb7\xae\xe8\xb4\xa8\xe6\x84\x9f)"
+    };
+    if (tbl->Combo("\xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe7\x94\xbb\xe9\xa3\x8e\xe6\xa1\xa3\xe4\xbd\x8d###enh_c_sty", &g_tuner.nr_style, kStyleItems, 3, -1)) {
+        g_tuner.preset_idx = 4;
+        mem_changed = true;
+        disk_commit = true;
+    }
 
     if (g_tuner.has_feeder_cfg) {
-        if (ImGui::SliderFloat("\xe8\xb6\x85\xe5\x88\x86\xe8\xbe\xb9\xe7\xbc\x98\xe9\x94\x90\xe5\x8c\x96\xe8\xa1\xa5\xe5\x81\xbf###enh_s_shp", &g_tuner.sharpness, 0.00f, 0.80f, "%.2f")) {
+        if (tbl->SliderFloat("\xe8\xb6\x85\xe5\x88\x86\xe8\xbe\xb9\xe7\xbc\x98\xe9\x94\x90\xe5\x8c\x96\xe8\xa1\xa5\xe5\x81\xbf###enh_s_shp", &g_tuner.sharpness, 0.00f, 0.80f, "%.2f", 0)) {
             g_tuner.preset_idx = 4;
         }
-        if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+        if (tbl->IsItemDeactivatedAfterEdit()) disk_commit = true;
 
-        if (ImGui::SliderFloat("\xe9\x9d\x99\xe6\xad\xa2\xe7\x94\xbb\xe9\x9d\xa2\xe9\x98\xb2\xe6\x8a\x96\xe7\xa8\xb3\xe5\xae\x9a###enh_s_hld", &g_tuner.hold_strength, 0.00f, 0.80f, "%.2f")) {
+        if (tbl->SliderFloat("\xe9\x9d\x99\xe6\xad\xa2\xe7\x94\xbb\xe9\x9d\xa2\xe9\x98\xb2\xe6\x8a\x96\xe7\xa8\xb3\xe5\xae\x9a###enh_s_hld", &g_tuner.hold_strength, 0.00f, 0.80f, "%.2f", 0)) {
             g_tuner.preset_idx = 4;
         }
-        if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+        if (tbl->IsItemDeactivatedAfterEdit()) disk_commit = true;
 
         static const char *kUpscaleItems[] = {
             "\xe5\x8f\x8c\xe7\xba\xbf\xe6\x80\xa7\xe6\x9e\x81\xe9\x80\x9f\xe6\x8f\x92\xe5\x80\xbc",
             "FSR1 \xe6\x9e\x81\xe9\x80\x9f\xe7\xa9\xba\xe9\x97\xb4\xe8\xb6\x85\xe5\x88\x86 (\xe6\x8e\xa8\xe8\x8d\x90\xe7\x9c\x81\xe5\x8d\xa1)",
             "DLSS SR \xe8\xb6\x85\xe5\x88\x86\xe5\x9b\x9e\xe6\x8b\x89"
         };
-        if (ImGui::Combo("\xe8\xb6\x85\xe5\x88\x86\xe5\x9b\x9e\xe6\x8b\x89\xe5\xbc\x95\xe6\x93\x8e###enh_c_up", &g_tuner.work_upscale, kUpscaleItems, 3)) {
+        if (tbl->Combo("\xe8\xb6\x85\xe5\x88\x86\xe5\x9b\x9e\xe6\x8b\x89\xe5\xbc\x95\xe6\x93\x8e###enh_c_up", &g_tuner.work_upscale, kUpscaleItems, 3, -1)) {
             g_tuner.preset_idx = 4;
             disk_commit = true;
         }
@@ -1132,6 +1243,11 @@ void draw_singlepass_tuner_panel() {
 #endif
     if (disk_commit) {
         persist_tuner_to_disk();
+    }
+    static bool s_logged_first_draw = false;
+    if (!s_logged_first_draw) {
+        s_logged_first_draw = true;
+        reshade::log::message(reshade::log::level::info, "DLSS 5 Swapper Enhanced: single-pass tuner panel rendered successfully.");
     }
 }
 
@@ -1196,7 +1312,7 @@ struct MsvcString {
     }
 };
 
-void patch_reshade_in_memory() {
+void patch_reshade_in_memory(bool patch_addon_list = true) {
     if (!g_reshade_module) return;
 
     auto *base = reinterpret_cast<uint8_t *>(g_reshade_module);
@@ -1245,8 +1361,8 @@ void patch_reshade_in_memory() {
         }
     }
 
-    // 2. 校验 s_addons 向量指纹（RVA 0x3d840 处 Generic Depth 注册代码），原位汉化插件列表标题与简介
-    if (!g_reshade_patched) {
+    // 2. 校验 s_addons 向量指纹（RVA 0x3d840 处 Generic Depth 注册代码），在首次打开 Home 面板时原位汉化所有已加载插件标题与简介
+    if (patch_addon_list && !g_reshade_patched) {
         const uint8_t expected_gd_reg[] = {0x41, 0xb8, 0x0d, 0x00, 0x00, 0x00, 0x48, 0x8d, 0x15, 0xeb, 0xf5, 0x3d, 0x00};
         if (memcmp(base + 0x3d840, expected_gd_reg, sizeof(expected_gd_reg)) == 0) {
             auto *first_ptr = *reinterpret_cast<uint8_t **>(base + 0x49bdb0);
@@ -1298,16 +1414,45 @@ void unpatch_reshade_in_memory() {
 }
 
 constexpr const char *kTuner64OverlayTitle =
-    "\xe2\x98\x85 \xe4\xb8\x80\xe5\xb1\x82 DLSS 5 \xe5\xbc\xba\xe5\x8c\x96\xe4\xb8\x8e\xe7\x9c\x81\xe5\x8d\xa1\xe5\xbf\xab\xe8\xb0\x83###DLSS5_SinglePass_Tuner64";
+    "\xe2\x98\x85 \xe4\xb8\x80\xe5\xb1\x82" " DLSS5 \xe5\xbf\xab\xe8\xb0\x83###DLSS5_SinglePass_Tuner64";
+constexpr const char *kTuner64SideWindowTitle =
+    "\xe2\x98\x85 \xe4\xb8\x80\xe5\xb1\x82" " DLSS 5 \xe5\xa2\x9e\xe6\x95\x88\xe4\xb8\x8e\xe7\x9c\x81\xe5\x8d\xa1\xe5\xbf\xab\xe8\xb0\x83###DLSS5_64Bit_SidePanel";
 bool g_tuner64_registered = false;
+bool g_host64_present_registered = false;
+bool g_overlay_open64 = false;
+int g_last_tuner64_tab_frame = -100;
 
-void on_draw_64bit_tuner_overlay(reshade::api::effect_runtime *) {
-    ImGui::PushID("ENH_Tuner64");
-    draw_singlepass_tuner_panel();
-    ImGui::PopID();
+bool on_open_overlay64(reshade::api::effect_runtime *, bool open, reshade::api::input_source) {
+    g_overlay_open64 = open;
+    if (open) {
+        static bool s_logged_open64 = false;
+        if (!s_logged_open64) {
+            s_logged_open64 = true;
+            reshade::log::message(reshade::log::level::info, "DLSS 5 Swapper Enhanced: ReShade Home menu opened in Chinese.");
+        }
+    }
+    return false;
 }
 
-// 每 500ms 无锁轮询一次 ReShade.ini 修改时间戳，使桌面端「立即热更新」按钮或 32 位跨进程侧边栏对 host64\ReShade.ini 的修改在 0.5 秒内实时注入内存生效
+void on_draw_64bit_tuner_overlay(reshade::api::effect_runtime *) {
+    const imgui_function_table *tbl = g_table_hooked ? &g_orig : imgui_function_table_instance();
+    if (!tbl) return;
+    g_last_tuner64_tab_frame = tbl->GetFrameCount();
+    tbl->PushID("ENH_Tuner64_Tab");
+    draw_singlepass_tuner_panel();
+    tbl->PopID();
+}
+
+void on_draw_64bit_addon_settings(reshade::api::effect_runtime *) {
+    const imgui_function_table *tbl = g_table_hooked ? &g_orig : imgui_function_table_instance();
+    if (!tbl) return;
+    g_last_tuner64_tab_frame = tbl->GetFrameCount();
+    tbl->PushID("ENH_Tuner64_Addon");
+    draw_singlepass_tuner_panel();
+    tbl->PopID();
+}
+
+// 仅在 32 位跨进程宿主 dlss5-feed-host64.exe 中每 500ms 轮询一次 host64\ReShade.ini 时间戳，使 32 位游戏内侧边栏调参 0.5 秒内同步生效
 void on_reshade_present(reshade::api::effect_runtime *) {
     const ULONGLONG now = GetTickCount64();
     if (now - g_last_poll_tick < 500) return;
@@ -1326,7 +1471,7 @@ void on_reshade_present(reshade::api::effect_runtime *) {
 #else // !_WIN64 (32位游戏跨进程 DLSS 5 神经渲染控制面板与汉化支持)
 
 bool g_gd_patched = true;
-void patch_reshade_in_memory() { g_reshade_patched = true; }
+void patch_reshade_in_memory(bool = true) { g_reshade_patched = true; }
 void unpatch_reshade_in_memory() {}
 
 using feeder_overlay_cb_t = void(__cdecl *)(reshade::api::effect_runtime *);
@@ -1542,6 +1687,41 @@ void on_reshade_overlay(reshade::api::effect_runtime *runtime) {
     }
 #else
     (void)runtime;
+    if (g_tuner64_registered && g_overlay_open64) {
+        const imgui_function_table *tbl = g_table_hooked ? &g_orig : imgui_function_table_instance();
+        if (tbl && (GetModuleHandleW(L"renodx-dlss5.addon64") != nullptr || GetModuleHandleW(L"dlss5-feed.addon64") != nullptr)) {
+            const int cur_frame = tbl->GetFrameCount();
+            if (cur_frame - g_last_tuner64_tab_frame > 1) {
+                const ImGuiIO &io = tbl->GetIO();
+                const float disp_x = io.DisplaySize.x;
+                const float disp_y = io.DisplaySize.y;
+                if (disp_x > 100.0f && disp_y > 100.0f) {
+                    float left_edge = 692.0f;
+                    if (disp_x < 1200.0f) {
+                        left_edge = disp_x > 500.0f ? (disp_x - 488.0f) : 8.0f;
+                    }
+                    float win_w = 488.0f;
+                    if (disp_x - left_edge - 12.0f < win_w) {
+                        win_w = disp_x - left_edge - 12.0f;
+                    }
+                    if (win_w < 320.0f) win_w = 320.0f;
+                    float win_h = disp_y - 24.0f;
+                    if (win_h > 476.0f) win_h = 476.0f;
+                    const ImVec2 pos(left_edge, 8.0f);
+                    const ImVec2 pivot(0.0f, 0.0f);
+                    const ImVec2 sz(win_w, win_h);
+                    tbl->SetNextWindowPos(pos, ImGuiCond_Once, pivot);
+                    tbl->SetNextWindowSize(sz, ImGuiCond_Once);
+                }
+                if (tbl->Begin(kTuner64SideWindowTitle, nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+                    tbl->PushID("ENH_Tuner64_Side");
+                    draw_singlepass_tuner_panel();
+                    tbl->PopID();
+                }
+                tbl->End();
+            }
+        }
+    }
 #endif
 }
 
@@ -1561,7 +1741,7 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
         &pinned_reshade);
     exact_map(); // 预热哈希表
     install_imgui_hooks();
-    patch_reshade_in_memory();
+    patch_reshade_in_memory(false);
     reshade::register_event<reshade::addon_event::reshade_overlay>(on_reshade_overlay);
 #ifndef _WIN64
     // 1. 预加载 dinput8.dll / hid.dll / setupapi.dll / winmm.dll，使 ReShade 在主线程同步完成延迟钩子安装，
@@ -1612,9 +1792,13 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
             }
         }
     }
-    reshade::register_event<reshade::addon_event::reshade_present>(on_reshade_present);
-    if (!is_host64_proc) {
+    if (is_host64_proc) {
+        reshade::register_event<reshade::addon_event::reshade_present>(on_reshade_present);
+        g_host64_present_registered = true;
+    } else {
+        reshade::register_event<reshade::addon_event::reshade_open_overlay>(on_open_overlay64);
         reshade::register_overlay(kTuner64OverlayTitle, on_draw_64bit_tuner_overlay);
+        reshade::register_overlay(nullptr, on_draw_64bit_addon_settings);
         g_tuner64_registered = true;
     }
 #endif
@@ -1630,10 +1814,15 @@ extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon, HMODULE reshade
     reshade::unregister_event<reshade::addon_event::init_device>(on_init_device);
 #else
     if (g_tuner64_registered) {
+        reshade::unregister_overlay(nullptr, on_draw_64bit_addon_settings);
         reshade::unregister_overlay(kTuner64OverlayTitle, on_draw_64bit_tuner_overlay);
+        reshade::unregister_event<reshade::addon_event::reshade_open_overlay>(on_open_overlay64);
         g_tuner64_registered = false;
     }
-    reshade::unregister_event<reshade::addon_event::reshade_present>(on_reshade_present);
+    if (g_host64_present_registered) {
+        reshade::unregister_event<reshade::addon_event::reshade_present>(on_reshade_present);
+        g_host64_present_registered = false;
+    }
 #endif
     reshade::unregister_event<reshade::addon_event::reshade_overlay>(on_reshade_overlay);
     unpatch_reshade_in_memory();

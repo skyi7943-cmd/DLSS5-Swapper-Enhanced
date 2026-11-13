@@ -8,6 +8,9 @@ if (!(Test-Path -LiteralPath $zig) -or !(Test-Path -LiteralPath (Join-Path $sdk 
 
 $outputDir = Join-Path $appRoot 'payload/enhanced/zh-cn'
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+Get-ChildItem -LiteralPath $outputDir -Filter '*.pdb' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+
+$cacheDir = Join-Path $appRoot 'vendor/enhanced-cache/zh-cn'
 
 $env:ZIG_GLOBAL_CACHE_DIR = Join-Path $appRoot 'tools/zig-cache'
 $env:ZIG_LOCAL_CACHE_DIR = Join-Path $appRoot 'tools/zig-local-cache'
@@ -36,6 +39,11 @@ foreach ($t in $targets) {
     & $zig @args
     if ($LASTEXITCODE -ne 0) {
         throw "$($t.OutName) compilation failed."
+    }
+
+    if (Test-Path -LiteralPath (Join-Path $appRoot 'vendor/enhanced-cache')) {
+        New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+        Copy-Item -LiteralPath $outFile -Destination (Join-Path $cacheDir $t.OutName) -Force
     }
 
     $stream = [IO.File]::OpenRead($outFile)

@@ -2210,26 +2210,3 @@ ipcMain.handle('enhanced-apply', (event, dir, config) => exclusiveMutation(async
   return result;
 }));
 
-ipcMain.handle('enhanced-apply-tuning', async (event, dir, tuning) => {
-  if (typeof dir !== 'string' || !path.isAbsolute(dir) || !fs.existsSync(dir)) {
-    return { ok: false, message: '无效的游戏目录' };
-  }
-  try {
-    const state = loadState();
-    const res = await combinedManager.applySinglePassTuning(dir, tuning || {}, {
-      hardwareProfile: state.hardwareProfile
-    });
-    const status = await combinedManager.inspectCombinedStatus(dir, {
-      payloadDir: resolvePayloadRoot(),
-      userDataDir: app.getPath('userData'),
-      hardwareProfile: state.hardwareProfile
-    });
-    if (event && event.sender) {
-      event.sender.send('job', { code: 'singlePassTuningApplied', params: { preset: res.tuning?.presetLabel || 'custom' } });
-    }
-    return { ...res, status };
-  } catch (err) {
-    return { ok: false, code: err.code || 'errApplyTuning', message: err.message };
-  }
-});
-

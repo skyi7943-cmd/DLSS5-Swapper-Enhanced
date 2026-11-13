@@ -773,6 +773,101 @@ test('v2.3.2 单层 DLSS 5 (NRPasses=1) 画质强化与省卡调优引擎、免�
   assert.equal(foundGames[0].dir, subGameDir);
 });
 
+test('v2.3.3 桌面端纯净度守卫、游戏内 Home 菜单参数防覆盖与 MinGW/MSVC ABI 闪退回归防护', async (t) => {
+  const { writePe } = require('./fixtures/pe');
+
+  // 1. 桌面端软件界面必须保持精简纯净，不包含单层调优滑块面板与 IPC 通道
+  const uiJs = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'enhanced-ui.js'), 'utf8');
+  const uiCss = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'enhanced-ui.css'), 'utf8');
+  const mainJs = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  const preloadJs = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
+
+  assert.equal(uiJs.includes('enh-tuning-card'), false, '桌面 UI 不应渲染单层调优卡片');
+  assert.equal(uiJs.includes('data-tune-slider'), false, '桌面 UI 不应渲染调优滑块');
+  assert.equal(uiCss.includes('.enh-tuning-card'), false, '桌面 CSS 不应残留单层调优样式');
+  assert.equal(mainJs.includes('enhanced-apply-tuning'), false, '主进程不应暴露桌面调优 IPC');
+  assert.equal(preloadJs.includes('enhancedApplyTuning'), false, '预加载脚本不应暴露桌面调优 API');
+  assert.equal(uiJs.includes('ENHANCED v2.3.3'), true, '界面徽章应更新为 ENHANCED v2.3.3');
+
+  // 2. C++ 游戏内 Home 插件源码严禁直接调用按值返回 ImVec2/ImVec4 的 ImGui 函数（防止 MinGW/MSVC sret 寄存器不匹配导致按 Home 闪退）
+  const cppSrc = fs.readFileSync(path.join(ROOT, 'overlay', 'zh-cn-overlay.cpp'), 'utf8');
+  const cppCodeOnly = cppSrc.replace(/\/\/.*$/gm, '');
+  for (const forbidden of [
+    'GetContentRegionAvail',
+    'GetContentRegionMax',
+    'GetWindowContentRegionMin',
+    'GetWindowContentRegionMax',
+    'GetWindowPos(',
+    'GetWindowSize(',
+    'GetCursorPos(',
+    'GetCursorStartPos(',
+    'GetCursorScreenPos(',
+    'GetItemRectMin(',
+    'GetItemRectMax(',
+    'GetItemRectSize(',
+    'CalcTextSize('
+  ]) {
+    assert.equal(cppCodeOnly.includes(forbidden), false, `zh-cn-overlay.cpp 严禁调用按值返回结构体的 ${forbidden}`);
+  }
+
+  // 校验 payload 与 vendor/enhanced-cache 中的 64/32 位中文插件哈希完全同步，防止打包时被旧缓存覆盖
+  for (const name of ['dlss5-zh-cn.addon64', 'dlss5-zh-cn.addon32']) {
+    const p1 = path.join(PAYLOAD_DIR, 'enhanced', 'zh-cn', name);
+    const p2 = path.join(ROOT, 'vendor', 'enhanced-cache', 'zh-cn', name);
+    assert.equal(fs.existsSync(p1), true, `${name} 必须存在于 payload/enhanced/zh-cn`);
+    if (fs.existsSync(p2)) {
+      assert.deepEqual(fs.readFileSync(p1), fs.readFileSync(p2), `${name} 在 payload 与 vendor/enhanced-cache 中必须字节级一致`);
+    }
+  }
+
+  // 3. 验证用户在游戏内 Home 菜单自定义参数写入 ReShade.ini 后，再次在桌面端点击应用配置不会覆盖用户的游戏内自定义值
+  const scratchBase = fs.existsSync('E:\\Antigravity_Scratch') ? 'E:\\Antigravity_Scratch' : ROOT;
+  const gameDir = fs.mkdtempSync(path.join(scratchBase, '.tmp-dlss5-v233-preserve-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-v233-userdata-'));
+  t.after(() => {
+    fs.rmSync(gameDir, { recursive: true, force: true });
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  });
+
+  writePe(path.join(gameDir, 'PBZTest.exe'), { bitness: 64, text: 'D3D12CreateDevice', size: 128 * 1024 });
+  fs.writeFileSync(path.join(gameDir, 'nvngx_dlss.dll'), fs.readFileSync(path.join(PAYLOAD_DIR, 'streamline', 'nvngx_dlss.dll')));
+
+  // 首次安装：应自动初始化单层强效·省卡基线 (NRPasses=1, NRIntensity=1.35, NRResolutionScale=0.75)
+  await combinedManager.applyCombinedConfiguration(gameDir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'off',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  let iniText = fs.readFileSync(path.join(gameDir, 'ReShade.ini'), 'utf8');
+  assert.equal(ini.getIni(iniText, 'RenoDX.DLSS5', 'NRPasses'), '1');
+  assert.equal(ini.getIni(iniText, 'RenoDX.DLSS5', 'NRIntensity'), '1.35');
+  assert.equal(ini.getIni(iniText, 'RenoDX.DLSS5', 'NRResolutionScale'), '0.75');
+
+  // 模拟玩家在游戏内按 Home 键将 NRIntensity 调为 1.62、NRResolutionScale 调为 0.67
+  iniText = ini.setIni(iniText, 'RenoDX.DLSS5', 'NRIntensity', '1.62');
+  iniText = ini.setIni(iniText, 'RenoDX.DLSS5', 'NRResolutionScale', '0.67');
+  fs.writeFileSync(path.join(gameDir, 'ReShade.ini'), iniText, 'utf8');
+
+  // 玩家随后在桌面端开启 MFG x3 并点击保存应用：必须保留玩家在游戏内 Home 菜单调好的 1.62 与 0.67
+  await combinedManager.applyCombinedConfiguration(gameDir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x3',
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  const iniAfter = fs.readFileSync(path.join(gameDir, 'ReShade.ini'), 'utf8');
+  assert.equal(ini.getIni(iniAfter, 'RenoDX.DLSS5', 'NRIntensity'), '1.62', '必须保留玩家在游戏内 Home 菜单调节的强度');
+  assert.equal(ini.getIni(iniAfter, 'RenoDX.DLSS5', 'NRResolutionScale'), '0.67', '必须保留玩家在游戏内 Home 菜单调节的工作分辨率');
+  assert.equal(ini.getIni(iniAfter, 'RenoDX.MFGUnlock', 'ForceMultiplier'), '3');
+  assert.equal(await backends.restore(gameDir), true);
+});
+
+
 
 
 
