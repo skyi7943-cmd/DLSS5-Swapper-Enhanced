@@ -55,6 +55,136 @@
     return HARDWARE_PROFILE_OPTIONS.find((p) => p.id === profileId) || HARDWARE_PROFILE_OPTIONS[0];
   }
 
+  // 一层 DLSS 5 画质强化与显卡降开销四套预设（全部严格锁定 NRPasses=1）
+  const TUNING_PRESETS = {
+    boost_eco: {
+      id: 'boost_eco',
+      label: '🔥 单层强效 · 省卡推荐',
+      badge: '甜点推荐 · 算力 -44%',
+      desc: '微结构 1.30x + 零通道精细细节 1.35x + 光影 1.22x，锁定 75% 整数比分辨率 + FSR1 超分锐化 + 极速光流，画质更强且像素算力直降 44%。',
+      intensity: 1.35,
+      structure: 1.30,
+      localTone: 1.22,
+      lookEnabled: true,
+      detailBoost: 1.35,
+      toneBoost: 1.15,
+      colorBoost: 1.08,
+      nrStyle: 1,
+      workResolution: 75,
+      workUpscale: 1,
+      sharpness: 0.35,
+      holdStrength: 0.30,
+      maxWorksets: 3,
+      motionCost: 'fast'
+    },
+    ultra_eco: {
+      id: 'ultra_eco',
+      label: '⚡ 极致省卡 · 高帧优先',
+      badge: '像素算力 -55%',
+      desc: '适合 6G/8G 显卡、掌机或高刷稳帧：内部工作分辨率降至 67% + 2 工作集精简池 + 0.45 锐化与 1.40x 细节补偿，像素推理负担大降 55%。',
+      intensity: 1.30,
+      structure: 1.25,
+      localTone: 1.18,
+      lookEnabled: true,
+      detailBoost: 1.40,
+      toneBoost: 1.12,
+      colorBoost: 1.06,
+      nrStyle: 1,
+      workResolution: 67,
+      workUpscale: 1,
+      sharpness: 0.45,
+      holdStrength: 0.40,
+      maxWorksets: 2,
+      motionCost: 'fast'
+    },
+    ultra_vivid: {
+      id: 'ultra_vivid',
+      label: '💎 单层满血 · 极限质感',
+      badge: '100% 满血单层',
+      desc: '保持 100% 原生工作分辨率，单层总强度拉升至 1.55x、微结构 1.45x、精细细节 1.45x，无需开双倍耗卡的 2 层即可呈现浓郁材质光影。',
+      intensity: 1.55,
+      structure: 1.45,
+      localTone: 1.35,
+      lookEnabled: true,
+      detailBoost: 1.45,
+      toneBoost: 1.22,
+      colorBoost: 1.12,
+      nrStyle: 1,
+      workResolution: 100,
+      workUpscale: 2,
+      sharpness: 0.28,
+      holdStrength: 0.25,
+      maxWorksets: 6,
+      motionCost: 'quality'
+    },
+    standard: {
+      id: 'standard',
+      label: '⚖️ 原厂标准 · 默认基线',
+      badge: '1.0x 原厂基准',
+      desc: '恢复单层 DLSS 5 原厂默认 1.00x 混合强度，关闭额外细节塑形，并沿用当前硬件档位的默认工作分辨率。',
+      intensity: 1.00,
+      structure: 1.00,
+      localTone: 1.00,
+      lookEnabled: false,
+      detailBoost: 1.00,
+      toneBoost: 1.00,
+      colorBoost: 1.00,
+      nrStyle: 0,
+      workResolution: null,
+      workUpscale: 1,
+      sharpness: 0.15,
+      holdStrength: 0.00,
+      maxWorksets: null,
+      motionCost: 'balanced'
+    }
+  };
+
+  function defaultProfileWorkRes(profileId) {
+    return (profileId === 'rtx40_desktop' || profileId === 'rtx50_desktop') ? 100 : 75;
+  }
+
+  function defaultProfileWorksets(profileId) {
+    return (profileId === 'rtx40_desktop' || profileId === 'rtx50_desktop') ? 8 : 4;
+  }
+
+  function clonePresetTuning(presetId, profileId) {
+    const p = TUNING_PRESETS[presetId] || TUNING_PRESETS.boost_eco;
+    return {
+      preset: p.id,
+      intensity: p.intensity,
+      structure: p.structure,
+      localTone: p.localTone,
+      lookEnabled: p.lookEnabled,
+      detailBoost: p.detailBoost,
+      toneBoost: p.toneBoost,
+      colorBoost: p.colorBoost,
+      nrStyle: p.nrStyle,
+      workResolution: p.workResolution !== null ? p.workResolution : defaultProfileWorkRes(profileId),
+      workUpscale: p.workUpscale,
+      sharpness: p.sharpness,
+      holdStrength: p.holdStrength,
+      maxWorksets: p.maxWorksets !== null ? p.maxWorksets : defaultProfileWorksets(profileId),
+      motionCost: p.motionCost
+    };
+  }
+
+  function calcUiTuningMetrics(t) {
+    const res = Number(t.workResolution) || 75;
+    const pixelSaved = Math.max(0, Math.round((1 - (res / 100) ** 2) * 100));
+    const lookOn = t.lookEnabled !== false;
+    const gain =
+      ((Number(t.intensity) || 1) - 1) * 0.42 +
+      ((Number(t.structure) || 1) - 1) * 0.28 +
+      ((Number(t.localTone) || 1) - 1) * 0.15 +
+      (lookOn ? ((Number(t.detailBoost) || 1) - 1) * 0.25 + ((Number(t.toneBoost) || 1) - 1) * 0.10 : 0) +
+      Math.max(0, (Number(t.sharpness) || 0) - 0.15) * 0.20;
+    const visualBoost = Math.round(gain * 100);
+    const upscaleText = Number(t.workUpscale) === 2
+      ? 'DLSS SR 超分回拉'
+      : (Number(t.workUpscale) === 1 ? 'FSR1 极速空间超分' : '双线性快速插值');
+    return { pixelSaved, visualBoost, upscaleText };
+  }
+
   // 每个游戏目录独立的 UI 选择状态（未点击“应用”前不会虚假声称已生效）
   const draftState = new Map();
   let cachedHw = null;
@@ -72,18 +202,27 @@
       const currentMfgMode = status?.mfg?.currentConfig?.mode && status.mfg.currentConfig.mode !== 'off'
         ? status.mfg.currentConfig.mode
         : 'x3';
+      const initialTuning = status?.singlePassTuning?.installed
+        ? { ...status.singlePassTuning }
+        : clonePresetTuning('boost_eco', statusProfile);
       draftState.set(dir, {
         hardwareProfile: statusProfile,
         neuralMode: currentNrMode,
         neuralModelId: currentModelId,
         runtimeStack: statusProfile === 'rtx50_desktop' ? 'oct2026-310.9.16' : 'baseline-310.9.1',
         mfgMode: currentMfgMode,
-        hdrCompatibility: false
+        hdrCompatibility: false,
+        singlePassTuning: initialTuning
       });
     }
     const d = draftState.get(dir);
     if (!d.hardwareProfile) d.hardwareProfile = statusProfile;
     if (!d.neuralModelId) d.neuralModelId = status?.neural?.currentModel?.id || '310.8.SF-v2';
+    if (!d.singlePassTuning) {
+      d.singlePassTuning = status?.singlePassTuning?.installed
+        ? { ...status.singlePassTuning }
+        : clonePresetTuning('boost_eco', d.hardwareProfile);
+    }
     return d;
   }
 
@@ -245,6 +384,13 @@
         ? `RTX 40 系桌面卡显存预算估算 (${vram.resolution || '2K/4K 100% 满血分辨率'} · 附加开销 +${vram.totalAddedOverheadMB || 0} MB)`
         : `RTX 40 系列笔记本省显存预算估算 (0.75x 省显存超分管线 · 附加开销 +${vram.totalAddedOverheadMB || 0} MB)`;
 
+    const tune = draft.singlePassTuning || clonePresetTuning('boost_eco', activeProfileId);
+    const tuneMetrics = calcUiTuningMetrics(tune);
+    const installedTune = status.singlePassTuning;
+    const tuneStatusLabel = installedTune?.installed
+      ? `当前已写入游戏：${installedTune.presetLabel || '自定义参数'} (${installedTune.workResolution}% 分辨率)`
+      : '待写入游戏（点击下方「立即热更新」或「加载 DLSS 5」即可生效）';
+
     return `
       <div class="enh-sheet-section" data-enh-dir="${escHtml(dir)}" data-enh-prefix="${escHtml(prefix)}">
         <!-- ==================== 顶部：硬件专属优化档位中文三选一菜单 ==================== -->
@@ -268,6 +414,139 @@
             <div><b>当前已选档位：${escHtml(activeProfileMeta.label)}</b></div>
             <small>${escHtml(activeProfileMeta.dlssSummary)}</small>
             <small>${escHtml(activeProfileMeta.mfgSummary)}</small>
+          </div>
+        </section>
+
+        <!-- ==================== v2.3.2 新增：一层 DLSS 5 画质强化与省卡调优器 ==================== -->
+        <section class="enh-tuning-card" aria-label="一层 DLSS 5 画质强化与省卡调优器">
+          <div class="enh-tuning-head">
+            <div class="enh-card-title">
+              <h4>⚡ 一层 DLSS 5 画质强化与省卡调优器 <span class="enh-badge enh-badge-verified">锁定单层 (NRPasses=1) · 杜绝双倍耗卡</span></h4>
+              <p>不开启双倍耗时的第 2 层叠加；通过解锁单层微表面几何重塑 + 零额外通道精细细节塑形，配合内部工作分辨率缩放与超分回拉，同步实现「一层画质显著增强 + 显卡算力显存双降」</p>
+            </div>
+            <span class="enh-tuning-live-tag">${escHtml(tuneStatusLabel)}</span>
+          </div>
+
+          <div class="enh-tuning-metrics">
+            <div class="enh-metric-pill">
+              <span class="k">神经渲染层数</span>
+              <span class="v">严格锁定 1 层 (NRPasses=1)</span>
+            </div>
+            <div class="enh-metric-pill highlight">
+              <span class="k">单层质感强化幅度</span>
+              <span class="v" data-tune-metric="boost">${tuneMetrics.visualBoost >= 0 ? `+${tuneMetrics.visualBoost}%` : `${tuneMetrics.visualBoost}%`} (相对 1.0x 原厂基线)</span>
+            </div>
+            <div class="enh-metric-pill eco">
+              <span class="k">GPU 像素推理开销</span>
+              <span class="v" data-tune-metric="compute">${tuneMetrics.pixelSaved > 0 ? `直降 -${tuneMetrics.pixelSaved}%` : '原生 100% 满载'} (工作分辨率 ${Number(tune.workResolution)}%)</span>
+            </div>
+            <div class="enh-metric-pill">
+              <span class="k">边缘超分回拉引擎</span>
+              <span class="v" data-tune-metric="upscale">${escHtml(tuneMetrics.upscaleText)}</span>
+            </div>
+          </div>
+
+          <div class="enh-tuning-presets" role="group" aria-label="单层强化与省卡预设切换">
+            ${Object.values(TUNING_PRESETS).map((p) => `
+              <button type="button" class="enh-tune-preset-btn ${tune.preset === p.id ? 'active' : ''}" data-tune-preset="${escHtml(p.id)}">
+                <div class="enh-profile-btn-top">
+                  <span class="enh-profile-btn-title">${escHtml(p.label)}</span>
+                  <span class="enh-profile-btn-tag">${escHtml(p.badge)}</span>
+                </div>
+                <span class="enh-profile-btn-desc">${escHtml(p.desc)}</span>
+              </button>
+            `).join('')}
+          </div>
+
+          <div class="enh-tuning-sliders">
+            <label class="enh-slider-item">
+              <div class="enh-slider-top">
+                <span>总神经渲染强度 (NRIntensity)</span>
+                <b data-tune-val="intensity">${Number(tune.intensity).toFixed(2)}x</b>
+              </div>
+              <input type="range" min="0.50" max="1.80" step="0.05" value="${Number(tune.intensity)}" data-tune-slider="intensity">
+              <small>放大单层 DLSS 5 整体材质与漫反射重塑权重（推荐 1.30x ~ 1.45x）</small>
+            </label>
+
+            <label class="enh-slider-item">
+              <div class="enh-slider-top">
+                <span>微表面结构重塑 (NRLocalStructure)</span>
+                <b data-tune-val="structure">${Number(tune.structure).toFixed(2)}x</b>
+              </div>
+              <input type="range" min="0.50" max="1.70" step="0.05" value="${Number(tune.structure)}" data-tune-slider="structure">
+              <small>大于 1.0x 时自动解除皮肤独立截断锁，直接增强砖石/金属/织物立体凹凸</small>
+            </label>
+
+            <label class="enh-slider-item">
+              <div class="enh-slider-top">
+                <span>精细纹理塑形 (NRLookDetail · 零通道耗时)</span>
+                <b data-tune-val="detailBoost">${Number(tune.detailBoost).toFixed(2)}x</b>
+              </div>
+              <input type="range" min="0.50" max="1.80" step="0.05" value="${Number(tune.detailBoost)}" data-tune-slider="detailBoost">
+              <small>激活内置轻量后处理塑形管线，不增加任何 Tensor 推理耗时即可锐化高频微纹理</small>
+            </label>
+
+            <label class="enh-slider-item">
+              <div class="enh-slider-top">
+                <span>局部光影立体感 (NRLocalTone)</span>
+                <b data-tune-val="localTone">${Number(tune.localTone).toFixed(2)}x</b>
+              </div>
+              <input type="range" min="0.50" max="1.60" step="0.05" value="${Number(tune.localTone)}" data-tune-slider="localTone">
+              <small>增强单层神经渲染的明暗层次与接触阴影体积感（推荐 1.18x ~ 1.30x）</small>
+            </label>
+
+            <label class="enh-slider-item">
+              <div class="enh-slider-top">
+                <span>内部神经与馈送工作分辨率 (省卡核心)</span>
+                <b data-tune-val="workResolution">${Math.round(Number(tune.workResolution))}%</b>
+              </div>
+              <input type="range" min="50" max="100" step="1" value="${Math.round(Number(tune.workResolution))}" data-tune-slider="workResolution">
+              <small>75% 即可省去 44% 像素算力，67% 省去 55% 像素算力，再经边缘感知超分无损回拉至全屏</small>
+            </label>
+
+            <label class="enh-slider-item">
+              <div class="enh-slider-top">
+                <span>超分边缘锐化补偿 (Sharpness)</span>
+                <b data-tune-val="sharpness">${Number(tune.sharpness).toFixed(2)}</b>
+              </div>
+              <input type="range" min="0.00" max="0.80" step="0.05" value="${Number(tune.sharpness)}" data-tune-slider="sharpness">
+              <small>补偿降分辨率省卡后的边缘锐度，建议 75% 配 0.35、67% 配 0.45</small>
+            </label>
+
+            <label class="enh-slider-item">
+              <div class="enh-slider-top">
+                <span>静止画面防抖稳定 (Hold Strength)</span>
+                <b data-tune-val="holdStrength">${Number(tune.holdStrength).toFixed(2)}</b>
+              </div>
+              <input type="range" min="0.00" max="0.80" step="0.05" value="${Number(tune.holdStrength)}" data-tune-slider="holdStrength">
+              <small>抑制单层高强度放大后的静止暗部微噪点呼吸感（推荐 0.25 ~ 0.40）</small>
+            </label>
+
+            <div class="enh-slider-item enh-tuning-selects">
+              <label>
+                <span>边缘超分回拉算法 (work_upscale)</span>
+                <select data-tune-select="workUpscale">
+                  <option value="1" ${Number(tune.workUpscale) === 1 ? 'selected' : ''}>FSR1 极速空间超分 + RCAS 锐化 (推荐省卡)</option>
+                  <option value="2" ${Number(tune.workUpscale) === 2 ? 'selected' : ''}>DLSS SR 深度学习超分回拉 (适合高配桌面卡)</option>
+                  <option value="0" ${Number(tune.workUpscale) === 0 ? 'selected' : ''}>双线性极速插值 (最低开销)</option>
+                </select>
+              </label>
+              <label>
+                <span>光流与几何求解开销档位 (Feeder 管线)</span>
+                <select data-tune-select="motionCost">
+                  <option value="fast" ${tune.motionCost === 'fast' ? 'selected' : ''}>⚡ 极速省卡光流 (vort_Motion + 关闭几何求解 · 推荐)</option>
+                  <option value="balanced" ${tune.motionCost === 'balanced' ? 'selected' : ''}>⚖️ 智能均衡模式 (保持自适应光流 + 关闭重度几何求解)</option>
+                  <option value="quality" ${tune.motionCost === 'quality' ? 'selected' : ''}>💎 高精度金字塔光流 (LumeniteFX 2.0 + 完整几何求解)</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="enh-tuning-footer">
+            <button type="button" class="enh-btn tune-apply-btn" data-enh-act="apply-tuning">
+              ⚡ 立即热更新一层强化与省卡参数（免重装 · 游戏运行中也可秒级生效）
+            </button>
+            <span class="enh-tuning-tip">💡 提示：进入游戏后随时按键盘 <code>Home</code> 键，也可在「⚡ 一层 DLSS 5 强化与省卡快调」全中文面板中边看画面边实时拖动滑块！</span>
           </div>
         </section>
 
@@ -555,13 +834,105 @@
       }
     };
 
+    // 绑定一层 DLSS 5 画质强化与省卡调优器事件
+    const updateLiveTuneMetricsDom = () => {
+      const t = draft.singlePassTuning;
+      if (!t) return;
+      const m = calcUiTuningMetrics(t);
+      const boostEl = container.querySelector('[data-tune-metric="boost"]');
+      if (boostEl) {
+        boostEl.textContent = `${m.visualBoost >= 0 ? `+${m.visualBoost}%` : `${m.visualBoost}%`} (相对 1.0x 原厂基线)`;
+      }
+      const compEl = container.querySelector('[data-tune-metric="compute"]');
+      if (compEl) {
+        compEl.textContent = `${m.pixelSaved > 0 ? `直降 -${m.pixelSaved}%` : '原生 100% 满载'} (工作分辨率 ${Math.round(Number(t.workResolution))}%)`;
+      }
+      const upEl = container.querySelector('[data-tune-metric="upscale"]');
+      if (upEl) upEl.textContent = m.upscaleText;
+      for (const b of container.querySelectorAll('[data-tune-preset]')) {
+        b.classList.toggle('active', b.dataset.tunePreset === t.preset);
+      }
+    };
+
+    for (const pBtn of container.querySelectorAll('[data-tune-preset]')) {
+      pBtn.onclick = () => {
+        draft.singlePassTuning = clonePresetTuning(pBtn.dataset.tunePreset, draft.hardwareProfile || 'rtx40_laptop');
+        onUpdated();
+      };
+    }
+
+    for (const slider of container.querySelectorAll('[data-tune-slider]')) {
+      slider.oninput = () => {
+        const key = slider.dataset.tuneSlider;
+        const num = Number(slider.value);
+        const t = draft.singlePassTuning || clonePresetTuning('boost_eco', draft.hardwareProfile);
+        t.preset = 'custom';
+        t[key] = key === 'workResolution' ? Math.round(num) : Math.round(num * 100) / 100;
+        if (key === 'detailBoost') {
+          t.lookEnabled = Math.abs(t.detailBoost - 1.0) > 0.01 || Math.abs((t.toneBoost || 1.0) - 1.0) > 0.01;
+        }
+        if (key === 'workResolution') {
+          t.maxWorksets = t.workResolution <= 68 ? 2 : (t.workResolution <= 80 ? 3 : (t.workResolution <= 92 ? 4 : 6));
+        }
+        draft.singlePassTuning = t;
+        const valEl = container.querySelector(`[data-tune-val="${key}"]`);
+        if (valEl) {
+          if (key === 'workResolution') valEl.textContent = `${t[key]}%`;
+          else if (key === 'sharpness' || key === 'holdStrength') valEl.textContent = t[key].toFixed(2);
+          else valEl.textContent = `${t[key].toFixed(2)}x`;
+        }
+        updateLiveTuneMetricsDom();
+      };
+    }
+
+    for (const sel of container.querySelectorAll('[data-tune-select]')) {
+      sel.onchange = () => {
+        const key = sel.dataset.tuneSelect;
+        const t = draft.singlePassTuning || clonePresetTuning('boost_eco', draft.hardwareProfile);
+        t.preset = 'custom';
+        t[key] = key === 'workUpscale' ? Number(sel.value) : sel.value;
+        draft.singlePassTuning = t;
+        updateLiveTuneMetricsDom();
+      };
+    }
+
+    const btnApplyTuning = container.querySelector('[data-enh-act="apply-tuning"]');
+    if (btnApplyTuning) {
+      btnApplyTuning.onclick = async () => {
+        btnApplyTuning.disabled = true;
+        const origText = btnApplyTuning.textContent;
+        btnApplyTuning.textContent = '⚡ 正在热更新一层强化与省卡参数…';
+        try {
+          const tunePayload = draft.singlePassTuning || clonePresetTuning('boost_eco', draft.hardwareProfile);
+          const res = await root.lab?.enhancedApplyTuning?.(dir, tunePayload);
+          if (res?.ok) {
+            const logMsg = `Enhanced: 已实时热更新一层 DLSS 5 调优参数 [预设=${res.tuning?.presetLabel || tunePayload.preset} · 分辨率=${res.tuning?.workResolution || tunePayload.workResolution}% · 更新文件=${(res.updatedFiles || []).join(', ') || '已就绪'}]`;
+            if (typeof root.jobLog === 'function') root.jobLog(logMsg);
+            if (typeof root.log === 'function') root.log(logMsg);
+            if (res.status?.singlePassTuning?.installed) {
+              draft.singlePassTuning = { ...res.status.singlePassTuning };
+            }
+          } else if (res?.message) {
+            if (typeof root.jobLog === 'function') root.jobLog(`提示: ${res.message}`);
+          }
+        } catch (err) {
+          if (typeof root.log === 'function') root.log(`热更新调优参数异常: ${err.message}`);
+        } finally {
+          await refreshContainer(container, dir, draft.hardwareProfile);
+          btnApplyTuning.textContent = origText;
+          btnApplyTuning.disabled = false;
+        }
+      };
+    }
+
     const btnApplyNr = container.querySelector('[data-enh-act="apply-nr"]');
     if (btnApplyNr) {
       btnApplyNr.onclick = () => runAction({
         neuralMode: draft.neuralMode,
         neuralModelId: draft.neuralModelId,
         runtimeStack: draft.runtimeStack,
-        hardwareProfile: draft.hardwareProfile
+        hardwareProfile: draft.hardwareProfile,
+        singlePassTuning: draft.singlePassTuning
       });
     }
 
@@ -626,7 +997,8 @@
         mfgMode: draft.mfgMode,
         runtimeStack: draft.runtimeStack,
         hdrCompatibility: draft.hdrCompatibility,
-        hardwareProfile: draft.hardwareProfile
+        hardwareProfile: draft.hardwareProfile,
+        singlePassTuning: draft.singlePassTuning
       });
     }
 
@@ -744,7 +1116,7 @@
     view.innerHTML = `
       <div class="section-head">
         <div>
-          <h3>DLSS 5 + 全系 40/50 显卡 MFG 增强控制中心 <span class="beta-tag" style="margin-left:8px">ENHANCED v2.3.1</span></h3>
+          <h3>DLSS 5 + 全系 40/50 显卡 MFG 增强控制中心 <span class="beta-tag" style="margin-left:8px">ENHANCED v2.3.2</span></h3>
           <p class="hint">支持【笔记本 40 系列】【40 系桌面卡】【50 系列桌面卡】三档专属调优，全模型 100% 兼容且桌面显卡完整兼容 MFG 多帧生成</p>
         </div>
       </div>

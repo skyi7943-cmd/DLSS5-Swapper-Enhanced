@@ -113,5 +113,6 @@ contextBridge.exposeInMainWorld('lab', {
   enhancedModels: (profileId) => ipcRenderer.invoke('enhanced-models', profileId),
   enhancedImportModel: (filePath, meta) => ipcRenderer.invoke('enhanced-import-model', filePath, meta),
   enhancedStatus: (dir, profileId) => ipcRenderer.invoke('enhanced-status', dir, profileId),
-  enhancedApply: (dir, config) => ipcRenderer.invoke('enhanced-apply', dir, config)
+  enhancedApply: (dir, config) => ipcRenderer.invoke('enhanced-apply', dir, config),
+  enhancedApplyTuning: (dir, tuning) => ipcRenderer.invoke('enhanced-apply-tuning', dir, tuning)
 });

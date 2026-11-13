@@ -11,9 +11,12 @@
 #include <windows.h>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <vector>
 #include <unordered_map>
 #include "zh-cn-dict.hpp"
 
@@ -489,6 +492,649 @@ bool hook_TabItemButton(const char *label, ImGuiTabItemFlags flags) {
     return g_orig.TabItemButton(translate_widget_label(label), flags);
 }
 
+// === v2.3.2 新增：一层 DLSS 5 (NRPasses=1) 画质强化与显卡降开销实时快调引擎 ===
+
+struct SinglePassTunerState {
+    bool initialized = false;
+    bool has_feeder_cfg = false;
+    bool is_host64 = false;
+    int preset_idx = 0; // 0: 单层强效·省卡, 1: 极致省卡·高帧, 2: 单层满血, 3: 原厂标准, 4: 自定义
+    float intensity = 1.35f;
+    float structure = 1.30f;
+    float local_tone = 1.22f;
+    bool look_enabled = true;
+    float detail_boost = 1.35f;
+    float tone_boost = 1.15f;
+    float color_boost = 1.08f;
+    int nr_style = 1;
+    int work_res = 75;
+    int work_upscale = 1;
+    float sharpness = 0.35f;
+    float hold_strength = 0.30f;
+};
+
+SinglePassTunerState g_tuner = {};
+std::wstring g_exe_dir_w;
+std::wstring g_consumer_ini_w;
+std::wstring g_feed_cfg_w;
+FILETIME g_last_ini_mtime = {0, 0};
+ULONGLONG g_last_poll_tick = 0;
+
+bool file_exists_w(const std::wstring &p) {
+    if (p.empty()) return false;
+    DWORD attr = GetFileAttributesW(p.c_str());
+    return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+bool get_file_mtime_w(const std::wstring &p, FILETIME *out) {
+    if (p.empty() || !out) return false;
+    WIN32_FILE_ATTRIBUTE_DATA fad = {};
+    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &fad)) return false;
+    *out = fad.ftLastWriteTime;
+    return true;
+}
+
+std::string read_utf8_file_w(const std::wstring &path) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return {};
+    LARGE_INTEGER sz = {};
+    if (!GetFileSizeEx(h, &sz) || sz.QuadPart <= 0 || sz.QuadPart > 4 * 1024 * 1024) {
+        CloseHandle(h);
+        return {};
+    }
+    std::string out(static_cast<size_t>(sz.QuadPart), '\0');
+    DWORD rd = 0;
+    ReadFile(h, out.data(), static_cast<DWORD>(out.size()), &rd, nullptr);
+    CloseHandle(h);
+    out.resize(rd);
+    return out;
+}
+
+bool write_utf8_atomic_w(const std::wstring &path, const std::string &content) {
+    if (path.empty()) return false;
+    DWORD attr = GetFileAttributesW(path.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY)) {
+        SetFileAttributesW(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+    }
+    wchar_t pid_buf[64] = {};
+    swprintf(pid_buf, 64, L".enh-%lu-%llu.tmp", GetCurrentProcessId(), GetTickCount64());
+    std::wstring tmp = path + pid_buf;
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD wr = 0;
+    BOOL ok = WriteFile(h, content.data(), static_cast<DWORD>(content.size()), &wr, nullptr);
+    FlushFileBuffers(h);
+    CloseHandle(h);
+    if (!ok || wr != content.size()) {
+        DeleteFileW(tmp.c_str());
+        return false;
+    }
+    if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        CopyFileW(tmp.c_str(), path.c_str(), FALSE);
+        DeleteFileW(tmp.c_str());
+    }
+    return true;
+}
+
+std::string trim_ascii(std::string_view sv) {
+    size_t b = 0, e = sv.size();
+    while (b < e && (sv[b] == ' ' || sv[b] == '\t' || sv[b] == '\r' || sv[b] == '\n')) ++b;
+    while (e > b && (sv[e - 1] == ' ' || sv[e - 1] == '\t' || sv[e - 1] == '\r' || sv[e - 1] == '\n')) --e;
+    return std::string(sv.substr(b, e - b));
+}
+
+bool iequals_ascii(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        char ca = (a[i] >= 'A' && a[i] <= 'Z') ? static_cast<char>(a[i] + 32) : a[i];
+        char cb = (b[i] >= 'A' && b[i] <= 'Z') ? static_cast<char>(b[i] + 32) : b[i];
+        if (ca != cb) return false;
+    }
+    return true;
+}
+
+std::string ini_get_str(const std::string &text, std::string_view section, std::string_view key) {
+    std::string cur_sec;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        if (end == std::string::npos) end = text.size();
+        std::string line = trim_ascii(std::string_view(text).substr(pos, end - pos));
+        pos = end + 1;
+        if (line.empty() || line[0] == ';' || line[0] == '#') continue;
+        if (line.front() == '[' && line.back() == ']') {
+            cur_sec = trim_ascii(std::string_view(line).substr(1, line.size() - 2));
+            continue;
+        }
+        if ((section.empty() && cur_sec.empty()) || iequals_ascii(cur_sec, section)) {
+            size_t eq = line.find('=');
+            if (eq != std::string::npos) {
+                std::string k = trim_ascii(std::string_view(line).substr(0, eq));
+                if (iequals_ascii(k, key)) {
+                    return trim_ascii(std::string_view(line).substr(eq + 1));
+                }
+            }
+        }
+    }
+    return {};
+}
+
+void ini_set_kv(std::string &text, const char *section, const char *key, const char *val) {
+    std::vector<std::string> lines;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        if (end == std::string::npos) {
+            std::string l = text.substr(pos);
+            if (!l.empty() && l.back() == '\r') l.pop_back();
+            lines.push_back(std::move(l));
+            break;
+        }
+        std::string l = text.substr(pos, end - pos);
+        if (!l.empty() && l.back() == '\r') l.pop_back();
+        lines.push_back(std::move(l));
+        pos = end + 1;
+    }
+
+    const bool root_sec = (!section || !section[0]);
+    bool in_sec = root_sec;
+    bool sec_found = root_sec;
+    bool key_written = false;
+    size_t insert_at = lines.size();
+
+    for (size_t i = 0; i < lines.size(); ++i) {
+        std::string trimmed = trim_ascii(lines[i]);
+        if (!trimmed.empty() && trimmed.front() == '[' && trimmed.back() == ']') {
+            if (in_sec && !root_sec && !key_written) {
+                insert_at = i;
+            }
+            std::string sec_name = trim_ascii(std::string_view(trimmed).substr(1, trimmed.size() - 2));
+            in_sec = !root_sec && iequals_ascii(sec_name, section);
+            if (in_sec) sec_found = true;
+            continue;
+        }
+        if (in_sec && !trimmed.empty() && trimmed[0] != ';' && trimmed[0] != '#') {
+            size_t eq = trimmed.find('=');
+            if (eq != std::string::npos) {
+                std::string k = trim_ascii(std::string_view(trimmed).substr(0, eq));
+                if (iequals_ascii(k, key)) {
+                    lines[i] = std::string(key) + "=" + val;
+                    key_written = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!key_written) {
+        if (!sec_found && !root_sec) {
+            if (!lines.empty() && !lines.back().empty()) lines.push_back({});
+            lines.push_back(std::string("[") + section + "]");
+            lines.push_back(std::string(key) + "=" + val);
+        } else {
+            lines.insert(lines.begin() + static_cast<ptrdiff_t>(insert_at), std::string(key) + "=" + val);
+        }
+    }
+
+    std::string out;
+    out.reserve(text.size() + 64);
+    for (const auto &l : lines) {
+        out += l;
+        out += "\r\n";
+    }
+    text = std::move(out);
+}
+
+bool parse_float_safe(const std::string &s, float *out) {
+    if (s.empty() || !out) return false;
+    char *endp = nullptr;
+    float v = strtof(s.c_str(), &endp);
+    if (endp == s.c_str() || !std::isfinite(v)) return false;
+    *out = v;
+    return true;
+}
+
+#ifdef _WIN64
+struct RenodxLiveAtomics {
+    bool checked = false;
+    bool valid = false;
+    volatile long *nr_passes = nullptr;
+    volatile long *nr_style = nullptr;
+    volatile long *nr_look_upsample = nullptr;
+    volatile long *nr_detail_stability = nullptr;
+    volatile long *nr_intensity_bits = nullptr;
+    volatile long *nr_local_tone_bits = nullptr;
+    volatile long *nr_local_structure_bits = nullptr;
+    volatile long *nr_res_scale_bits = nullptr;
+    volatile long *nr_look_strength_bits = nullptr;
+    volatile long *nr_look_colour_bits = nullptr;
+    volatile long *nr_look_tone_bits = nullptr;
+    volatile long *nr_look_detail_bits = nullptr;
+    uint8_t *nr_skin_independent = nullptr;
+    uint8_t *nr_follow_input_res = nullptr;
+    uint8_t *nr_look_mode = nullptr;
+};
+
+RenodxLiveAtomics g_rx_atomics = {};
+
+inline void store_atomic_float(volatile long *dst, float val) {
+    if (!dst) return;
+    long bits = 0;
+    memcpy(&bits, &val, sizeof(long));
+    _InterlockedExchange(dst, bits);
+}
+
+inline void store_atomic_bool(uint8_t *dst, bool val) {
+    if (!dst) return;
+    __atomic_store_n(dst, static_cast<uint8_t>(val ? 1 : 0), __ATOMIC_SEQ_CST);
+}
+
+bool ensure_renodx_atomics_bound() {
+    if (g_rx_atomics.valid) return true;
+    if (g_rx_atomics.checked) return false;
+
+    HMODULE mod = GetModuleHandleW(L"renodx-dlss5.addon64");
+    if (!mod) return false; // 尚未加载完成，稍后重试
+
+    g_rx_atomics.checked = true;
+    auto *base = reinterpret_cast<uint8_t *>(mod);
+    auto *dos = reinterpret_cast<IMAGE_DOS_HEADER *>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+    auto *nt = reinterpret_cast<IMAGE_NT_HEADERS64 *>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.SizeOfImage != 0x30C000) return false;
+
+    struct DescCheck {
+        uint32_t entry_rva;
+        const char *key;
+        int slot; // 1: float*, 2: int*, 3: bool*
+        uint32_t ptr_rva;
+    };
+    static const DescCheck kChecks[] = {
+        {0x2a8da0, "NRIntensity",       1, 0x2e55d0},
+        {0x2a8e10, "NRStyle",           2, 0x2ea0f4},
+        {0x2a8e40, "NRLocalTone",       1, 0x2e55d4},
+        {0x2a8e78, "NRLocalStructure",  1, 0x2e55d8},
+        {0x2a8ef0, "NRSkinIndependent", 3, 0x2e55e0},
+        {0x2a9130, "NRFollowInputRes",  3, 0x2ea208},
+        {0x2a9170, "NRResolutionScale", 1, 0x2e5678},
+        {0x2a91b0, "NRPasses",          2, 0x2e55f0},
+        {0x2a9c38, "NRLookMode",        3, 0x2ea11a},
+        {0x2a9c70, "NRLookStrength",    1, 0x2e5640},
+        {0x2a9d90, "NRLookColour",      1, 0x2e564c},
+        {0x2a9ee8, "NRLookTone",        1, 0x2e5660},
+        {0x2a9f20, "NRLookDetail",      1, 0x2e5664},
+        {0x2aa0c8, "NRLookUpsample",    2, 0x2ea138},
+        {0x2aa100, "NRDetailStability", 2, 0x2ea13c},
+    };
+
+    const uintptr_t rdata_min = reinterpret_cast<uintptr_t>(base + 0x15F000);
+    const uintptr_t rdata_max = reinterpret_cast<uintptr_t>(base + 0x2E2000);
+    for (const auto &c : kChecks) {
+        const auto *qwords = reinterpret_cast<const uintptr_t *>(base + c.entry_rva);
+        if (qwords[0] < rdata_min || qwords[0] >= rdata_max) return false;
+        if (strcmp(reinterpret_cast<const char *>(qwords[0]), c.key) != 0) return false;
+        if (qwords[c.slot] != reinterpret_cast<uintptr_t>(base + c.ptr_rva)) return false;
+    }
+
+    g_rx_atomics.nr_intensity_bits       = reinterpret_cast<volatile long *>(base + 0x2e55d0);
+    g_rx_atomics.nr_local_tone_bits      = reinterpret_cast<volatile long *>(base + 0x2e55d4);
+    g_rx_atomics.nr_local_structure_bits = reinterpret_cast<volatile long *>(base + 0x2e55d8);
+    g_rx_atomics.nr_res_scale_bits       = reinterpret_cast<volatile long *>(base + 0x2e5678);
+    g_rx_atomics.nr_look_strength_bits   = reinterpret_cast<volatile long *>(base + 0x2e5640);
+    g_rx_atomics.nr_look_colour_bits     = reinterpret_cast<volatile long *>(base + 0x2e564c);
+    g_rx_atomics.nr_look_tone_bits       = reinterpret_cast<volatile long *>(base + 0x2e5660);
+    g_rx_atomics.nr_look_detail_bits     = reinterpret_cast<volatile long *>(base + 0x2e5664);
+
+    g_rx_atomics.nr_style                = reinterpret_cast<volatile long *>(base + 0x2ea0f4);
+    g_rx_atomics.nr_passes               = reinterpret_cast<volatile long *>(base + 0x2e55f0);
+    g_rx_atomics.nr_look_upsample        = reinterpret_cast<volatile long *>(base + 0x2ea138);
+    g_rx_atomics.nr_detail_stability     = reinterpret_cast<volatile long *>(base + 0x2ea13c);
+
+    g_rx_atomics.nr_skin_independent     = base + 0x2e55e0;
+    g_rx_atomics.nr_follow_input_res     = base + 0x2ea208;
+    g_rx_atomics.nr_look_mode            = base + 0x2ea11a;
+    g_rx_atomics.valid = true;
+    return true;
+}
+
+void apply_tuner_to_renodx_memory() {
+    if (!ensure_renodx_atomics_bound()) return;
+    _InterlockedExchange(g_rx_atomics.nr_passes, 1);
+    _InterlockedExchange(g_rx_atomics.nr_style, g_tuner.nr_style);
+    _InterlockedExchange(g_rx_atomics.nr_look_upsample, 1);
+    _InterlockedExchange(g_rx_atomics.nr_detail_stability, 0);
+
+    store_atomic_float(g_rx_atomics.nr_intensity_bits, g_tuner.intensity);
+    store_atomic_float(g_rx_atomics.nr_local_structure_bits, g_tuner.structure);
+    store_atomic_float(g_rx_atomics.nr_local_tone_bits, g_tuner.local_tone);
+    store_atomic_float(g_rx_atomics.nr_res_scale_bits, static_cast<float>(g_tuner.work_res) / 100.0f);
+    store_atomic_float(g_rx_atomics.nr_look_strength_bits, 1.0f);
+    store_atomic_float(g_rx_atomics.nr_look_detail_bits, g_tuner.detail_boost);
+    store_atomic_float(g_rx_atomics.nr_look_tone_bits, g_tuner.tone_boost);
+    store_atomic_float(g_rx_atomics.nr_look_colour_bits, g_tuner.color_boost);
+
+    store_atomic_bool(g_rx_atomics.nr_skin_independent, g_tuner.structure <= 1.001f);
+    store_atomic_bool(g_rx_atomics.nr_follow_input_res, false);
+    store_atomic_bool(g_rx_atomics.nr_look_mode, g_tuner.look_enabled);
+}
+#endif
+
+int detect_tuner_preset() {
+    auto nearf = [](float a, float b) { return std::fabs(a - b) <= 0.035f; };
+    if (nearf(g_tuner.intensity, 1.35f) && nearf(g_tuner.structure, 1.30f) && g_tuner.look_enabled && nearf(g_tuner.detail_boost, 1.35f) && std::abs(g_tuner.work_res - 75) <= 2) return 0;
+    if (nearf(g_tuner.intensity, 1.30f) && nearf(g_tuner.structure, 1.25f) && g_tuner.look_enabled && nearf(g_tuner.detail_boost, 1.40f) && std::abs(g_tuner.work_res - 67) <= 2) return 1;
+    if (nearf(g_tuner.intensity, 1.55f) && nearf(g_tuner.structure, 1.45f) && g_tuner.look_enabled && nearf(g_tuner.detail_boost, 1.45f) && std::abs(g_tuner.work_res - 100) <= 2) return 2;
+    if (nearf(g_tuner.intensity, 1.00f) && nearf(g_tuner.structure, 1.00f) && !g_tuner.look_enabled) return 3;
+    return 4;
+}
+
+void reload_tuner_from_disk(bool sync_memory = false) {
+    float fv = 0.0f;
+    std::string ini = read_utf8_file_w(g_consumer_ini_w);
+    if (!ini.empty()) {
+        if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRIntensity"), &fv) && fv >= 0.4f && fv <= 2.0f) g_tuner.intensity = fv;
+        if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRLocalStructure"), &fv) && fv >= 0.4f && fv <= 2.0f) g_tuner.structure = fv;
+        if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRLocalTone"), &fv) && fv >= 0.4f && fv <= 2.0f) g_tuner.local_tone = fv;
+        std::string lm = ini_get_str(ini, "RenoDX.DLSS5", "NRLookMode");
+        if (!lm.empty()) g_tuner.look_enabled = (lm == "1" || iequals_ascii(lm, "true"));
+        if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRLookDetail"), &fv) && fv >= 0.4f && fv <= 2.0f) g_tuner.detail_boost = fv;
+        if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRLookTone"), &fv) && fv >= 0.4f && fv <= 2.0f) g_tuner.tone_boost = fv;
+        if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRLookColour"), &fv) && fv >= 0.4f && fv <= 2.0f) g_tuner.color_boost = fv;
+        if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRStyle"), &fv)) g_tuner.nr_style = static_cast<int>(fv);
+        if (parse_float_safe(ini_get_str(ini, "RenoDX.DLSS5", "NRResolutionScale"), &fv) && fv >= 0.45f && fv <= 1.05f) {
+            g_tuner.work_res = static_cast<int>(std::lround(fv * 100.0f));
+        }
+    }
+
+    g_tuner.has_feeder_cfg = file_exists_w(g_feed_cfg_w);
+    if (g_tuner.has_feeder_cfg) {
+        std::string cfg = read_utf8_file_w(g_feed_cfg_w);
+        if (!cfg.empty()) {
+            if (ini.empty() && parse_float_safe(ini_get_str(cfg, "", "work_resolution"), &fv) && fv >= 50.0f && fv <= 100.0f) {
+                g_tuner.work_res = static_cast<int>(std::lround(fv));
+            }
+            if (parse_float_safe(ini_get_str(cfg, "", "work_upscale"), &fv) && fv >= 0.0f && fv <= 2.0f) {
+                g_tuner.work_upscale = static_cast<int>(std::lround(fv));
+            }
+            if (parse_float_safe(ini_get_str(cfg, "", "work_sharpness"), &fv) && fv >= 0.0f && fv <= 1.0f) {
+                g_tuner.sharpness = fv;
+            }
+            if (parse_float_safe(ini_get_str(cfg, "", "hold_strength"), &fv) && fv >= 0.0f && fv <= 1.0f) {
+                g_tuner.hold_strength = fv;
+            }
+        }
+    }
+
+    g_tuner.preset_idx = detect_tuner_preset();
+    get_file_mtime_w(g_consumer_ini_w, &g_last_ini_mtime);
+#ifdef _WIN64
+    if (sync_memory && !ini.empty()) {
+        apply_tuner_to_renodx_memory();
+    }
+#else
+    (void)sync_memory;
+#endif
+}
+
+void init_singlepass_tuner() {
+    if (g_tuner.initialized) return;
+    g_tuner.initialized = true;
+
+    wchar_t buf[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, buf, MAX_PATH)) return;
+    wchar_t lower[MAX_PATH] = {};
+    wcscpy_s(lower, buf);
+    _wcslwr_s(lower, MAX_PATH);
+    g_tuner.is_host64 = (wcsstr(lower, L"dlss5-feed-host64") != nullptr);
+
+    std::wstring full(buf);
+    size_t slash = full.find_last_of(L"\\/");
+    g_exe_dir_w = (slash != std::wstring::npos) ? full.substr(0, slash) : L".";
+
+#ifdef _WIN64
+    g_consumer_ini_w = g_exe_dir_w + L"\\ReShade.ini";
+    if (g_tuner.is_host64) {
+        size_t parent_slash = g_exe_dir_w.find_last_of(L"\\/");
+        std::wstring parent_dir = (parent_slash != std::wstring::npos) ? g_exe_dir_w.substr(0, parent_slash) : g_exe_dir_w;
+        g_feed_cfg_w = parent_dir + L"\\dlss5-feed.cfg";
+    } else {
+        g_feed_cfg_w = g_exe_dir_w + L"\\dlss5-feed.cfg";
+    }
+#else
+    g_consumer_ini_w = g_exe_dir_w + L"\\host64\\ReShade.ini";
+    g_feed_cfg_w = g_exe_dir_w + L"\\dlss5-feed.cfg";
+#endif
+    reload_tuner_from_disk(false);
+}
+
+void persist_tuner_to_disk() {
+    char num[32] = {};
+    if (!g_consumer_ini_w.empty()) {
+        std::string ini = read_utf8_file_w(g_consumer_ini_w);
+        ini_set_kv(ini, "RenoDX DLSS", "NRPasses", "1");
+        ini_set_kv(ini, "RenoDX.DLSS5", "ConfigVersion", "7");
+        ini_set_kv(ini, "RenoDX.DLSS5", "NeuralUplift", "1");
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRPasses", "1");
+        snprintf(num, sizeof(num), "%.2f", g_tuner.intensity);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRIntensity", num);
+        snprintf(num, sizeof(num), "%.2f", g_tuner.structure);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRLocalStructure", num);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRSkinIndependent", g_tuner.structure > 1.001f ? "0" : "1");
+        snprintf(num, sizeof(num), "%.2f", g_tuner.local_tone);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRLocalTone", num);
+        snprintf(num, sizeof(num), "%d", g_tuner.nr_style);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRStyle", num);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRLookMode", g_tuner.look_enabled ? "1" : "0");
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRLookStrength", "1");
+        snprintf(num, sizeof(num), "%.2f", g_tuner.detail_boost);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRLookDetail", num);
+        snprintf(num, sizeof(num), "%.2f", g_tuner.tone_boost);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRLookTone", num);
+        snprintf(num, sizeof(num), "%.2f", g_tuner.color_boost);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRLookColour", num);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRDetailStability", "0");
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRLookUpsample", "1");
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRFollowInputRes", "0");
+        snprintf(num, sizeof(num), "%.2f", static_cast<float>(g_tuner.work_res) / 100.0f);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRResolutionScale", num);
+        const int worksets = g_tuner.work_res <= 68 ? 2 : (g_tuner.work_res <= 80 ? 3 : 6);
+        snprintf(num, sizeof(num), "%d", worksets);
+        ini_set_kv(ini, "RenoDX.DLSS5", "NRMaxWorksets", num);
+        write_utf8_atomic_w(g_consumer_ini_w, ini);
+        get_file_mtime_w(g_consumer_ini_w, &g_last_ini_mtime);
+    }
+
+    if (g_tuner.has_feeder_cfg || file_exists_w(g_feed_cfg_w)) {
+        g_tuner.has_feeder_cfg = true;
+        std::string cfg = read_utf8_file_w(g_feed_cfg_w);
+        snprintf(num, sizeof(num), "%d", g_tuner.work_res);
+        ini_set_kv(cfg, "", "work_resolution", num);
+        snprintf(num, sizeof(num), "%d", g_tuner.work_upscale);
+        ini_set_kv(cfg, "", "work_upscale", num);
+        snprintf(num, sizeof(num), "%.2f", g_tuner.sharpness);
+        ini_set_kv(cfg, "", "work_sharpness", num);
+        snprintf(num, sizeof(num), "%.2f", g_tuner.hold_strength);
+        ini_set_kv(cfg, "", "hold_strength", num);
+        ini_set_kv(cfg, "", "hold_tolerance", "0.05");
+        write_utf8_atomic_w(g_feed_cfg_w, cfg);
+    }
+}
+
+void apply_tuner_preset(int idx) {
+    g_tuner.preset_idx = idx;
+    if (idx == 0) { // 单层强效·省卡推荐
+        g_tuner.intensity = 1.35f;
+        g_tuner.structure = 1.30f;
+        g_tuner.local_tone = 1.22f;
+        g_tuner.look_enabled = true;
+        g_tuner.detail_boost = 1.35f;
+        g_tuner.tone_boost = 1.15f;
+        g_tuner.color_boost = 1.08f;
+        g_tuner.nr_style = 1;
+        g_tuner.work_res = 75;
+        g_tuner.work_upscale = 1;
+        g_tuner.sharpness = 0.35f;
+        g_tuner.hold_strength = 0.30f;
+    } else if (idx == 1) { // 极致省卡·高帧优先
+        g_tuner.intensity = 1.30f;
+        g_tuner.structure = 1.25f;
+        g_tuner.local_tone = 1.18f;
+        g_tuner.look_enabled = true;
+        g_tuner.detail_boost = 1.40f;
+        g_tuner.tone_boost = 1.12f;
+        g_tuner.color_boost = 1.06f;
+        g_tuner.nr_style = 1;
+        g_tuner.work_res = 67;
+        g_tuner.work_upscale = 1;
+        g_tuner.sharpness = 0.45f;
+        g_tuner.hold_strength = 0.40f;
+    } else if (idx == 2) { // 单层满血·极限质感
+        g_tuner.intensity = 1.55f;
+        g_tuner.structure = 1.45f;
+        g_tuner.local_tone = 1.35f;
+        g_tuner.look_enabled = true;
+        g_tuner.detail_boost = 1.45f;
+        g_tuner.tone_boost = 1.22f;
+        g_tuner.color_boost = 1.12f;
+        g_tuner.nr_style = 1;
+        g_tuner.work_res = 100;
+        g_tuner.work_upscale = 2;
+        g_tuner.sharpness = 0.28f;
+        g_tuner.hold_strength = 0.25f;
+    } else if (idx == 3) { // 原厂标准 1.0x
+        g_tuner.intensity = 1.00f;
+        g_tuner.structure = 1.00f;
+        g_tuner.local_tone = 1.00f;
+        g_tuner.look_enabled = false;
+        g_tuner.detail_boost = 1.00f;
+        g_tuner.tone_boost = 1.00f;
+        g_tuner.color_boost = 1.00f;
+        g_tuner.nr_style = 0;
+        g_tuner.work_res = 75;
+        g_tuner.work_upscale = 1;
+        g_tuner.sharpness = 0.15f;
+        g_tuner.hold_strength = 0.00f;
+    }
+#ifdef _WIN64
+    apply_tuner_to_renodx_memory();
+#endif
+    persist_tuner_to_disk();
+}
+
+void draw_singlepass_tuner_panel() {
+    init_singlepass_tuner();
+
+    const float ratio = static_cast<float>(g_tuner.work_res) / 100.0f;
+    int saved_pct = static_cast<int>(std::lround((1.0f - ratio * ratio) * 100.0f));
+    if (saved_pct < 0) saved_pct = 0;
+    const float gain =
+        (g_tuner.intensity - 1.0f) * 0.42f +
+        (g_tuner.structure - 1.0f) * 0.28f +
+        (g_tuner.local_tone - 1.0f) * 0.15f +
+        (g_tuner.look_enabled ? (g_tuner.detail_boost - 1.0f) * 0.25f + (g_tuner.tone_boost - 1.0f) * 0.10f : 0.0f) +
+        (g_tuner.sharpness > 0.15f ? (g_tuner.sharpness - 0.15f) * 0.20f : 0.0f);
+    const int boost_pct = static_cast<int>(std::lround(gain * 100.0f));
+
+    ImGui::TextColored(
+        ImVec4(0.52f, 0.94f, 0.32f, 1.0f),
+        "\xe2\x97\x8f \xe9\x94\x81\xe5\xae\x9a 1 \xe5\xb1\x82\xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93 (NRPasses=1) | \xe8\xb4\xa8\xe6\x84\x9f\xe5\xbc\xba\xe5\x8c\x96: %+d%% | \xe5\x83\x8f\xe7\xb4\xa0\xe7\xae\x97\xe5\x8a\x9b: -%d%% (%d%%)",
+        boost_pct, saved_pct, g_tuner.work_res);
+
+    const float avail_w = ImGui::GetContentRegionAvail().x;
+    const float half_w = avail_w > 220.0f ? (avail_w - ImGui::GetStyle().ItemSpacing.x) * 0.5f : 0.0f;
+
+    auto draw_preset_btn = [&](int idx, const char *label) {
+        const bool active = (g_tuner.preset_idx == idx);
+        if (active) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.24f, 0.56f, 0.12f, 0.92f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.66f, 0.16f, 0.98f));
+        }
+        if (ImGui::Button(label, ImVec2(half_w, 0.0f))) {
+            apply_tuner_preset(idx);
+        }
+        if (active) {
+            ImGui::PopStyleColor(2);
+        }
+    };
+
+    draw_preset_btn(0, "[\xe6\x8e\xa8\xe8\x8d\x90] \xe5\x8d\x95\xe5\xb1\x82\xe5\xbc\xba\xe6\x95\x88\xc2\xb7\xe7\x9c\x81\xe5\x8d\xa1 (-44%)###enh_p0");
+    if (half_w > 0.0f) ImGui::SameLine();
+    draw_preset_btn(1, "[\xe7\x9c\x81\xe5\x8d\xa1] \xe6\x9e\x81\xe8\x87\xb4\xe7\x9c\x81\xe5\x8d\xa1\xc2\xb7\xe9\xab\x98\xe5\xb8\xa7 (-55%)###enh_p1");
+
+    draw_preset_btn(2, "[\xe6\xbb\xa1\xe8\xa1\x80] \xe5\x8d\x95\xe5\xb1\x82\xe6\xbb\xa1\xe8\xa1\x80\xc2\xb7\xe6\x9e\x81\xe9\x99\x90 (100%)###enh_p2");
+    if (half_w > 0.0f) ImGui::SameLine();
+    draw_preset_btn(3, "[\xe5\x9f\xba\xe5\x87\x86] \xe5\x8e\x9f\xe5\x8e\x82\xe6\xa0\x87\xe5\x87\x86 1.0x###enh_p3");
+
+    ImGui::Spacing();
+    bool mem_changed = false;
+    bool disk_commit = false;
+
+    if (ImGui::SliderFloat("\xe6\x80\xbb\xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe5\xbc\xba\xe5\xba\xa6###enh_s_int", &g_tuner.intensity, 0.50f, 1.80f, "%.2fx")) {
+        g_tuner.preset_idx = 4;
+        mem_changed = true;
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+
+    if (ImGui::SliderFloat("\xe5\xbe\xae\xe8\xa1\xa8\xe9\x9d\xa2\xe7\xbb\x93\xe6\x9e\x84\xe9\x87\x8d\xe5\xa1\x91###enh_s_str", &g_tuner.structure, 0.50f, 1.70f, "%.2fx")) {
+        g_tuner.preset_idx = 4;
+        mem_changed = true;
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+
+    if (ImGui::SliderFloat("\xe7\xb2\xbe\xe7\xbb\x86\xe7\xbb\x86\xe8\x8a\x82\xe5\xa1\x91\xe5\xbd\xa2 (\xe9\x9b\xb6\xe8\x80\x97\xe6\x97\xb6)###enh_s_det", &g_tuner.detail_boost, 0.50f, 1.80f, "%.2fx")) {
+        g_tuner.preset_idx = 4;
+        g_tuner.look_enabled = (std::fabs(g_tuner.detail_boost - 1.0f) > 0.01f) || (std::fabs(g_tuner.tone_boost - 1.0f) > 0.01f);
+        mem_changed = true;
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+
+    if (ImGui::SliderFloat("\xe5\xb1\x80\xe9\x83\xa8\xe5\x85\x89\xe5\xbd\xb1\xe7\xab\x8b\xe4\xbd\x93\xe6\x84\x9f###enh_s_ton", &g_tuner.local_tone, 0.50f, 1.60f, "%.2fx")) {
+        g_tuner.preset_idx = 4;
+        mem_changed = true;
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+
+    if (ImGui::SliderInt("\xe5\x86\x85\xe9\x83\xa8\xe5\xb7\xa5\xe4\xbd\x9c\xe5\x88\x86\xe8\xbe\xa8\xe7\x8e\x87 (\xe7\x9c\x81\xe5\x8d\xa1)###enh_s_res", &g_tuner.work_res, 50, 100, "%d%%")) {
+        g_tuner.preset_idx = 4;
+        mem_changed = true;
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+
+    if (g_tuner.has_feeder_cfg) {
+        if (ImGui::SliderFloat("\xe8\xb6\x85\xe5\x88\x86\xe8\xbe\xb9\xe7\xbc\x98\xe9\x94\x90\xe5\x8c\x96\xe8\xa1\xa5\xe5\x81\xbf###enh_s_shp", &g_tuner.sharpness, 0.00f, 0.80f, "%.2f")) {
+            g_tuner.preset_idx = 4;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+
+        if (ImGui::SliderFloat("\xe9\x9d\x99\xe6\xad\xa2\xe7\x94\xbb\xe9\x9d\xa2\xe9\x98\xb2\xe6\x8a\x96\xe7\xa8\xb3\xe5\xae\x9a###enh_s_hld", &g_tuner.hold_strength, 0.00f, 0.80f, "%.2f")) {
+            g_tuner.preset_idx = 4;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) disk_commit = true;
+
+        static const char *kUpscaleItems[] = {
+            "\xe5\x8f\x8c\xe7\xba\xbf\xe6\x80\xa7\xe6\x9e\x81\xe9\x80\x9f\xe6\x8f\x92\xe5\x80\xbc",
+            "FSR1 \xe6\x9e\x81\xe9\x80\x9f\xe7\xa9\xba\xe9\x97\xb4\xe8\xb6\x85\xe5\x88\x86 (\xe6\x8e\xa8\xe8\x8d\x90\xe7\x9c\x81\xe5\x8d\xa1)",
+            "DLSS SR \xe8\xb6\x85\xe5\x88\x86\xe5\x9b\x9e\xe6\x8b\x89"
+        };
+        if (ImGui::Combo("\xe8\xb6\x85\xe5\x88\x86\xe5\x9b\x9e\xe6\x8b\x89\xe5\xbc\x95\xe6\x93\x8e###enh_c_up", &g_tuner.work_upscale, kUpscaleItems, 3)) {
+            g_tuner.preset_idx = 4;
+            disk_commit = true;
+        }
+    }
+
+#ifdef _WIN64
+    if (mem_changed) {
+        apply_tuner_to_renodx_memory();
+    }
+#else
+    (void)mem_changed;
+#endif
+    if (disk_commit) {
+        persist_tuner_to_disk();
+    }
+}
+
 // === ReShade 6.8.0.2155 内置 Generic Depth 与插件列表说明原位汉化 (64位专属) ===
 #ifdef _WIN64
 
@@ -621,7 +1267,7 @@ void patch_reshade_in_memory() {
                             name_str->replace_in_place_if_fits("DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93 (RenoDX)");
                             desc_str->replace_in_place_if_fits("\xe9\x80\x82\xe7\x94\xa8\xe4\xba\x8e NGX / Streamline \xe6\xb8\xb8\xe6\x88\x8f\xe7\x9a\x84 DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe5\x90\x8e\xe5\xa4\x84\xe7\x90\x86\xe7\xbb\x84\xe4\xbb\xb6");
                         } else if (nsv == "DLSS 5 Feed 1.17.0" || nsv == "DLSS 5 Feed 1.19.0") {
-                            name_str->replace_in_place_if_fits("DLSS 5 \xe6\xb7\xb1\xe5\xba\xa8\xe4\xb8\x8e\xe8\xbf\x90\xe5\x8a\xa8\xe9\xa6\x88\xe9\x80\x81\xe5\x99\xa8");
+                            name_str->replace_in_place_if_fits("DLSS 5 \xe6\xb7\xb1\xe5\xba\xa6\xe4\xb8\x8e\xe8\xbf\x90\xe5\x8a\xa8\xe9\xa6\x88\xe9\x80\x81\xe5\x99\xa8");
                             desc_str->replace_in_place_if_fits("\xe4\xb8\xba\xe6\x97\xa0\xe5\x8e\x9f\xe7\x94\x9f DLSS \xe7\x9a\x84 D3D11/D3D12/Vulkan/OpenGL \xe6\xb8\xb8\xe6\x88\x8f\xe5\x90\x91 DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe9\xa6\x88\xe9\x80\x81\xe6\xb7\xb1\xe5\xba\xa6\xe4\xb8\x8e\xe8\xbf\x90\xe5\x8a\xa8\xe7\x9f\xa2\xe9\x87\x8f (\xe9\x85\x8d\xe7\xbd\xae\xe4\xbf\x9d\xe5\xad\x98\xe4\xba\x8e dlss5-feed.cfg)\xe3\x80\x82");
                         } else if (nsv == "RenoDX DLSS") {
                             name_str->replace_in_place_if_fits("RenoDX\xe8\xb6\x85\xe5\x88\x86");
@@ -649,6 +1295,32 @@ void unpatch_reshade_in_memory() {
         FlushInstructionCache(GetCurrentProcess(), base + 0x31000, 0x1000);
     }
     g_gd_patched = false;
+}
+
+constexpr const char *kTuner64OverlayTitle =
+    "\xe2\x98\x85 \xe4\xb8\x80\xe5\xb1\x82 DLSS 5 \xe5\xbc\xba\xe5\x8c\x96\xe4\xb8\x8e\xe7\x9c\x81\xe5\x8d\xa1\xe5\xbf\xab\xe8\xb0\x83###DLSS5_SinglePass_Tuner64";
+bool g_tuner64_registered = false;
+
+void on_draw_64bit_tuner_overlay(reshade::api::effect_runtime *) {
+    ImGui::PushID("ENH_Tuner64");
+    draw_singlepass_tuner_panel();
+    ImGui::PopID();
+}
+
+// 每 500ms 无锁轮询一次 ReShade.ini 修改时间戳，使桌面端「立即热更新」按钮或 32 位跨进程侧边栏对 host64\ReShade.ini 的修改在 0.5 秒内实时注入内存生效
+void on_reshade_present(reshade::api::effect_runtime *) {
+    const ULONGLONG now = GetTickCount64();
+    if (now - g_last_poll_tick < 500) return;
+    g_last_poll_tick = now;
+
+    init_singlepass_tuner();
+    FILETIME cur_mtime = {0, 0};
+    if (get_file_mtime_w(g_consumer_ini_w, &cur_mtime)) {
+        if (cur_mtime.dwLowDateTime != g_last_ini_mtime.dwLowDateTime ||
+            cur_mtime.dwHighDateTime != g_last_ini_mtime.dwHighDateTime) {
+            reload_tuner_from_disk(true);
+        }
+    }
 }
 
 #else // !_WIN64 (32位游戏跨进程 DLSS 5 神经渲染控制面板与汉化支持)
@@ -713,6 +1385,14 @@ void draw_32bit_dlss5_panel_contents(reshade::api::effect_runtime *runtime) {
     ImGui::TextColored(
         ImVec4(0.45f, 0.92f, 0.35f, 1.0f),
         "\xe2\x97\x8f DLSS 5 \xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe5\xb7\xb2\xe6\xbf\x80\xe6\xb4\xbb (32\xe4\xbd\x8d\xe6\xb8\xb8\xe6\x88\x8f -> host64 64\xe4\xbd\x8d\xe7\xa5\x9e\xe7\xbb\x8f\xe6\xb8\xb2\xe6\x9f\x93\xe7\xae\xa1\xe7\xba\xbf)");
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader(
+            "\xe2\x98\x85 \xe4\xb8\x80\xe5\xb1\x82 DLSS 5 \xe5\xbc\xba\xe5\x8c\x96\xe4\xb8\x8e\xe7\x9c\x81\xe5\x8d\xa1\xe5\xbf\xab\xe8\xb0\x83 (\xe5\xae\x9e\xe6\x97\xb6\xe7\x94\x9f\xe6\x95\x88)###ENH_Tuner32_Hdr",
+            ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::PushID("ENH_Tuner32");
+        draw_singlepass_tuner_panel();
+        ImGui::PopID();
+    }
     ImGui::Separator();
     if (feeder_overlay_cb_t cb = find_feeder32_overlay_callback()) {
         cb(runtime);
@@ -920,18 +1600,25 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
     reshade::register_overlay(kDlss5TabTitle, on_draw_32bit_dlss5_tab);
 #else
     // 若当前 64 位宿主进程 (dlss5-feed-host64.exe) 继承了 32 位父进程的受限 CPU 亲和性掩码，自动恢复全核心亲和性以保证神经渲染满速运行
+    bool is_host64_proc = false;
     wchar_t host_path[MAX_PATH] = {};
     if (GetModuleFileNameW(nullptr, host_path, MAX_PATH)) {
         _wcslwr_s(host_path, MAX_PATH);
         if (wcsstr(host_path, L"dlss5-feed-host64")) {
+            is_host64_proc = true;
             DWORD_PTR proc_mask = 0, sys_mask = 0;
             if (GetProcessAffinityMask(GetCurrentProcess(), &proc_mask, &sys_mask) && sys_mask != 0 && proc_mask != sys_mask) {
                 SetProcessAffinityMask(GetCurrentProcess(), sys_mask);
             }
         }
     }
+    reshade::register_event<reshade::addon_event::reshade_present>(on_reshade_present);
+    if (!is_host64_proc) {
+        reshade::register_overlay(kTuner64OverlayTitle, on_draw_64bit_tuner_overlay);
+        g_tuner64_registered = true;
+    }
 #endif
-    reshade::log::message(reshade::log::level::info, "DLSS 5 Swapper Enhanced: Simplified Chinese UI localization layer active.");
+    reshade::log::message(reshade::log::level::info, "DLSS 5 Swapper Enhanced: Simplified Chinese UI localization & single-pass tuner active.");
     return true;
 }
 
@@ -941,6 +1628,12 @@ extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon, HMODULE reshade
     reshade::unregister_event<reshade::addon_event::reshade_overlay_technique>(on_overlay_technique);
     reshade::unregister_event<reshade::addon_event::reshade_open_overlay>(on_open_overlay);
     reshade::unregister_event<reshade::addon_event::init_device>(on_init_device);
+#else
+    if (g_tuner64_registered) {
+        reshade::unregister_overlay(kTuner64OverlayTitle, on_draw_64bit_tuner_overlay);
+        g_tuner64_registered = false;
+    }
+    reshade::unregister_event<reshade::addon_event::reshade_present>(on_reshade_present);
 #endif
     reshade::unregister_event<reshade::addon_event::reshade_overlay>(on_reshade_overlay);
     unpatch_reshade_in_memory();

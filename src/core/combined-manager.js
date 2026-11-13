@@ -15,6 +15,7 @@ const feederConfig = require('./feeder-config');
 const { scanGame } = require('./scan');
 const neuralModels = require('./neural-models');
 const mfgManager = require('./mfg-manager');
+const singlePassTuning = require('./singlepass-tuning');
 
 // 硬件环境缓存（避免每次刷新面板重复调用外部进程）
 let cachedHardwareInfo = null;
@@ -105,8 +106,14 @@ function estimateVramBudget({
   mfgMode = 'off',
   vramTotalMB = 8188,
   resolution = '1920x1080',
-  hardwareProfile = 'rtx40_laptop'
+  hardwareProfile = 'rtx40_laptop',
+  singlePassTuning: tuningInput = null
 } = {}) {
+  const normTuning = tuningInput
+    ? (tuningInput.metrics ? tuningInput : singlePassTuning.normalizeSinglePassTuning(tuningInput, hardwareProfile))
+    : null;
+  const hasActiveTuning = Boolean(normTuning && (normTuning.preset !== 'standard' || normTuning.workResolution !== (hardwareProfile === 'rtx40_laptop' ? 75 : 100)));
+
   // 桌面卡档位（40系桌面卡 / 50系桌面卡）：按 2K/4K 100% 满血工作分辨率与 8 缓冲池评估
   if (hardwareProfile === 'rtx40_desktop' || hardwareProfile === 'rtx50_desktop') {
     const effectiveVramMB = vramTotalMB > 10000 ? vramTotalMB : (hardwareProfile === 'rtx50_desktop' ? 16384 : 12288);
@@ -115,6 +122,9 @@ function estimateVramBudget({
     let neuralOverheadMB = 0;
     if (neuralMode !== 'off') {
       neuralOverheadMB = neuralModelId === '310.9.16-oct2026' ? 760 : 920;
+      if (hasActiveTuning) {
+        neuralOverheadMB = singlePassTuning.estimateTunedNeuralOverheadMB(neuralOverheadMB, normTuning, hardwareProfile);
+      }
     }
     let mfgOverheadMB = 0;
     if (mfgMode === 'x2') mfgOverheadMB = 420;
@@ -133,6 +143,9 @@ function estimateVramBudget({
       level = 'caution';
       summary = `[${profileLabel}] DLSS 5 100% 满血画质 (+${neuralOverheadMB} MiB) + MFG ${mfgMode} (+${mfgOverheadMB} MiB) 合计增加 +${totalAddedOverheadMB} MiB 显存开销，剩余显存裕量约 ${headroomMB} MiB，4K 极限画质下建议配合 DLSS Quality 模式。`;
     }
+    if (hasActiveTuning && neuralMode !== 'off') {
+      summary += ` [已启用单层调优「${normTuning.presetLabel}」：工作分辨率 ${normTuning.workResolution}% · 像素推理开销 -${normTuning.metrics.pixelComputeSavedPercent}%]`;
+    }
 
     return {
       resolution: desktopRes,
@@ -146,15 +159,19 @@ function estimateVramBudget({
       usagePercent,
       level,
       hardwareProfile,
+      singlePassTuning: normTuning,
       summary
     };
   }
 
-  // 笔记本 40 系列默认黄金档位（保持 100% 原封不动）
+  // 笔记本 40 系列默认黄金档位（未启用自定义单层调优时保持 100% 原封不动）
   const baseGame1080pMB = 5400; // 1080p 现代 DX12 游戏典型显存基准
   let neuralOverheadMB = 0;
   if (neuralMode !== 'off') {
     neuralOverheadMB = neuralModelId === '310.9.16-oct2026' ? 540 : 680;
+    if (hasActiveTuning) {
+      neuralOverheadMB = singlePassTuning.estimateTunedNeuralOverheadMB(neuralOverheadMB, normTuning, hardwareProfile);
+    }
   }
 
   let mfgOverheadMB = 0;
@@ -176,6 +193,9 @@ function estimateVramBudget({
     level = 'caution';
     summary = `提示：DLSS 5 (+${neuralOverheadMB} MiB) + MFG ${mfgMode} (+${mfgOverheadMB} MiB) 合计增加 +${totalAddedOverheadMB} MiB 显存占用（预计总计 ~${estimatedTotalMB}/${vramTotalMB} MiB）。在 RTX 40 系列笔记本 8GB 省显存优化管线 (0.75x 神经工作集 + 边缘感知上采样) 下可稳定运行，建议配合 DLSS 超分辨率质量档以获得更佳显存裕量。`;
   }
+  if (hasActiveTuning && neuralMode !== 'off') {
+    summary += ` [已启用单层调优「${normTuning.presetLabel}」：工作分辨率 ${normTuning.workResolution}% · 像素推理开销 -${normTuning.metrics.pixelComputeSavedPercent}%]`;
+  }
 
   return {
     resolution,
@@ -189,12 +209,13 @@ function estimateVramBudget({
     usagePercent,
     level,
     hardwareProfile: 'rtx40_laptop',
+    singlePassTuning: normTuning,
     summary
   };
 }
 
 // 执行 7 项 DLSS 5 + MFG 联合运行深度兼容性检查
-function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, hardwareProfile = 'rtx40_laptop') {
+function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, hardwareProfile = 'rtx40_laptop', tuning = null) {
   const exeDir = scan.chosen ? path.dirname(scan.chosen.path) : gameDir;
   const bothActive = neuralStatus.mode !== 'off' && mfgStatus.currentConfig.mode !== 'off';
 
@@ -261,7 +282,8 @@ function evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardw
     neuralModelId: neuralStatus.currentModel?.id || '310.8.SF-v2',
     mfgMode: mfgStatus.currentConfig.mode,
     vramTotalMB: hardware?.gpu?.vramTotalMB || 8188,
-    hardwareProfile
+    hardwareProfile,
+    singlePassTuning: tuning && tuning.installed ? tuning : null
   });
 
   // 6. Reflex、帧同步和延迟控制是否仍有效
@@ -386,7 +408,13 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     mfgManager.inspectGameMfgStatus(gameDir, { payloadDir, gpuName, driverVersion, hardwareProfile: effectiveProfile })
   ]);
 
-  const coExecution = evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, effectiveProfile);
+  const tuning = singlePassTuning.inspectGameTuning(gameDir, {
+    exeDir: scan.chosen ? path.dirname(scan.chosen.path) : gameDir,
+    bitness: scan.chosen ? scan.chosen.bitness : null,
+    hardwareProfile: effectiveProfile
+  });
+
+  const coExecution = evaluateCoExecutionChecks(gameDir, scan, neuralStatus, mfgStatus, hardware, effectiveProfile, tuning);
 
   // 汇总错误日志
   const errorLogs = [
@@ -431,6 +459,8 @@ async function inspectCombinedStatus(gameDir, { payloadDir, userDataDir, hardwar
     },
     neural: neuralStatus,
     mfg: mfgStatus,
+    singlePassTuning: tuning,
+    singlePassPresets: singlePassTuning.SINGLE_PASS_PRESETS,
     diagnostics: {
       gameName: path.basename(gameDir),
       graphicsApi: scan.chosen ? scan.chosen.apiLabel : 'Unknown',
@@ -458,6 +488,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     hdrCompatibility = false,
     ensureStreamline = true,
     hardwareProfile,
+    singlePassTuning: requestedTuning,
     payloadDir,
     userDataDir
   } = config;
@@ -911,6 +942,18 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     });
   }
 
+  // 4. 若指定了单层 DLSS 5 画质强化与省卡调优参数（或清单中已保存用户的单层调优配置），立即同步写入 ReShade.ini / dlss5-feed.cfg / ReShadePreset.ini
+  let tuningResult = null;
+  const effectiveTuningInput = requestedTuning !== undefined
+    ? requestedTuning
+    : (existingManifest?.singlePassTuning || null);
+  if (effectiveTuningInput && neuralMode !== 'off') {
+    tuningResult = await singlePassTuning.applyTuningToGame(gameDir, effectiveTuningInput, {
+      scan,
+      hardwareProfile: effectiveProfile
+    });
+  }
+
   const updatedStatus = await inspectCombinedStatus(gameDir, {
     payloadDir: effectivePayloadDir,
     userDataDir,
@@ -923,6 +966,7 @@ async function applyCombinedConfiguration(gameDir, config = {}, onLog = () => {}
     feederSummary,
     neuralResult,
     mfgResult,
+    tuningResult,
     status: updatedStatus
   };
 }
@@ -933,5 +977,7 @@ module.exports = {
   estimateVramBudget,
   evaluateCoExecutionChecks,
   inspectCombinedStatus,
-  applyCombinedConfiguration
+  applyCombinedConfiguration,
+  inspectSinglePassTuning: singlePassTuning.inspectGameTuning,
+  applySinglePassTuning: singlePassTuning.applyTuningToGame
 };

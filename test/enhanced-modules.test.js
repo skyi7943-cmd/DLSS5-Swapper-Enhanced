@@ -649,6 +649,130 @@ test('v2.3.1 老游戏全面兼容审计：32位 DDraw/D3D8/D3D9/OpenGL 包装�
   assert.equal(fs.existsSync(path.join(ddrawDir, 'host64')), false);
 });
 
+test('v2.3.2 单层 DLSS 5 (NRPasses=1) 画质强化与省卡调优引擎、免重装热更新及学习版目录识别验证', async (t) => {
+  const singlePassTuning = require('../src/core/singlepass-tuning');
+  const library = require('../src/library');
+  const { writePe } = require('./fixtures/pe');
+
+  // 1. 验证四套预设与自定义参数均严格锁定 NRPasses=1，且解除皮肤独立截断锁 + 开启零耗时精细细节塑形
+  const boostEco = singlePassTuning.normalizeSinglePassTuning({ preset: 'boost_eco' }, 'rtx40_laptop');
+  assert.equal(boostEco.nrPasses, 1);
+  assert.equal(boostEco.workResolution, 75);
+  assert.equal(boostEco.metrics.pixelComputeSavedPercent, 44);
+  assert.ok(boostEco.metrics.visualBoostPercent >= 25);
+
+  const iniBoost = singlePassTuning.applyTuningToConsumerIni('', boostEco, { hardwareProfile: 'rtx40_laptop' });
+  assert.equal(ini.getIni(iniBoost, 'RenoDX.DLSS5', 'NRPasses'), '1');
+  assert.equal(ini.getIni(iniBoost, 'RenoDX.DLSS5', 'NRIntensity'), '1.35');
+  assert.equal(ini.getIni(iniBoost, 'RenoDX.DLSS5', 'NRLocalStructure'), '1.3');
+  assert.equal(ini.getIni(iniBoost, 'RenoDX.DLSS5', 'NRSkinIndependent'), '0', '微结构 > 1.0x 时必须自动设为 0 以免被截断回 1.0');
+  assert.equal(ini.getIni(iniBoost, 'RenoDX.DLSS5', 'NRLookMode'), '1', '必须激活零额外通道的精细细节塑形管线');
+  assert.equal(ini.getIni(iniBoost, 'RenoDX.DLSS5', 'NRLookDetail'), '1.35');
+  assert.equal(ini.getIni(iniBoost, 'RenoDX.DLSS5', 'NRResolutionScale'), '0.75');
+
+  const ultraEco = singlePassTuning.normalizeSinglePassTuning({ preset: 'ultra_eco' }, 'rtx40_laptop');
+  assert.equal(ultraEco.workResolution, 67);
+  assert.equal(ultraEco.metrics.pixelComputeSavedPercent, 55);
+  assert.equal(ultraEco.maxWorksets, 2);
+
+  // 2. 验证显存预算估算随单层省卡档位动态下降（未传调优参数时保持原值不变）
+  const baseVram = combinedManager.estimateVramBudget({
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x3',
+    hardwareProfile: 'rtx40_desktop'
+  });
+  const ecoVram = combinedManager.estimateVramBudget({
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'x3',
+    hardwareProfile: 'rtx40_desktop',
+    singlePassTuning: { preset: 'boost_eco' }
+  });
+  assert.equal(baseVram.neuralOverheadMB, 920);
+  assert.ok(ecoVram.neuralOverheadMB < baseVram.neuralOverheadMB, '开启单层省卡调优后神经渲染显存开销必须显著降低');
+
+  // 3. 验证 64 位无原生 DLSS 游戏与 32 位跨进程 host64 游戏的免重装极速热更新与无损卸载
+  const scratchBase = fs.existsSync('E:\\Antigravity_Scratch') ? 'E:\\Antigravity_Scratch' : ROOT;
+  const game64Dir = fs.mkdtempSync(path.join(scratchBase, '.tmp-dlss5-v232-64-'));
+  const game32Dir = fs.mkdtempSync(path.join(scratchBase, '.tmp-dlss5-v232-32-'));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dlss5-v232-userdata-'));
+  t.after(() => {
+    fs.rmSync(game64Dir, { recursive: true, force: true });
+    fs.rmSync(game32Dir, { recursive: true, force: true });
+    fs.rmSync(userDataDir, { recursive: true, force: true });
+  });
+
+  writePe(path.join(game64Dir, 'StudyGameDX11.exe'), { bitness: 64, text: 'D3D11CreateDevice' });
+  const apply64 = await combinedManager.applyCombinedConfiguration(game64Dir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    neuralModelId: '310.8.SF-v2',
+    mfgMode: 'off',
+    singlePassTuning: { preset: 'boost_eco' },
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  assert.equal(apply64.ok, true);
+  assert.equal(apply64.status.singlePassTuning.installed, true);
+  assert.equal(apply64.status.singlePassTuning.preset, 'boost_eco');
+
+  // 免重装实时热更新切换至 ultra_eco 再切换至自定义参数
+  const hotRes64 = await combinedManager.applySinglePassTuning(game64Dir, {
+    preset: 'custom',
+    intensity: 1.48,
+    structure: 1.38,
+    localTone: 1.25,
+    detailBoost: 1.42,
+    workResolution: 68,
+    workUpscale: 1,
+    sharpness: 0.42,
+    holdStrength: 0.35,
+    motionCost: 'fast'
+  });
+  assert.equal(hotRes64.ok, true);
+  const inspected64 = combinedManager.inspectSinglePassTuning(game64Dir, { hardwareProfile: 'rtx40_laptop' });
+  assert.equal(inspected64.installed, true);
+  assert.equal(inspected64.preset, 'custom');
+  assert.equal(inspected64.workResolution, 68);
+  assert.equal(inspected64.intensity, 1.48);
+  const preset64Text = fs.readFileSync(path.join(game64Dir, 'ReShadePreset.ini'), 'utf8');
+  assert.equal(ini.getIni(preset64Text, 'DLSS5_Feed.fx', 'GEOM_ENABLE'), '0', '省卡光流模式下应关闭多通道几何相机求解器');
+  assert.equal(await backends.restore(game64Dir), true);
+
+  // 32 位跨进程 host64 热更新验证
+  writePe(path.join(game32Dir, 'ClassicStudy32.exe'), { bitness: 32, text: 'Direct3DCreate9' });
+  await combinedManager.applyCombinedConfiguration(game32Dir, {
+    hardwareProfile: 'rtx40_laptop',
+    neuralMode: 'latest_compatible',
+    mfgMode: 'off',
+    singlePassTuning: { preset: 'ultra_eco' },
+    payloadDir: PAYLOAD_DIR,
+    userDataDir
+  });
+  const hostIni = fs.readFileSync(path.join(game32Dir, 'host64', 'ReShade.ini'), 'utf8');
+  const feedCfg32 = fs.readFileSync(path.join(game32Dir, 'dlss5-feed.cfg'), 'utf8');
+  assert.equal(ini.getIni(hostIni, 'RenoDX.DLSS5', 'NRPasses'), '1');
+  assert.equal(ini.getIni(hostIni, 'RenoDX.DLSS5', 'NRResolutionScale'), '0.67');
+  assert.equal(ini.getIni(hostIni, 'RenoDX.DLSS5', 'NRLookDetail'), '1.4');
+  assert.match(feedCfg32, /work_resolution=67/);
+  assert.match(feedCfg32, /work_sharpness=0\.45/);
+  assert.equal(await backends.restore(game32Dir), true);
+
+  // 4. 验证中文学习版 / 免安装游戏库目录自动扫描识别
+  assert.equal(library.LIBRARY_NAME.test('学习版'), true);
+  assert.equal(library.LIBRARY_NAME.test('单机游戏'), true);
+  assert.equal(library.LIBRARY_NAME.test('免安装游戏'), true);
+  const studyLibRoot = fs.mkdtempSync(path.join(scratchBase, '.tmp-study-lib-'));
+  t.after(() => fs.rmSync(studyLibRoot, { recursive: true, force: true }));
+  const subGameDir = path.join(studyLibRoot, '黑神话学习版测试');
+  fs.mkdirSync(subGameDir, { recursive: true });
+  writePe(path.join(subGameDir, 'b1-Win64-Shipping.exe'), { bitness: 64, text: 'D3D12CreateDevice', size: 256 * 1024 });
+  const foundGames = library.folder(studyLibRoot, 'My folders', true);
+  assert.equal(foundGames.length, 1);
+  assert.equal(foundGames[0].dir, subGameDir);
+});
+
 
 
 

@@ -215,7 +215,7 @@ const SYSTEM_DIRS = new Set([
 
 // Folder names people give a games library. Matched first so a library that
 // happens to hold one game is still recognised.
-const LIBRARY_NAME = /^(games?|my ?games|steamlibrary|gog ?games|epic ?games|xbox ?games|origin ?games|repacks?|emulation)$/i;
+const LIBRARY_NAME = /^(games?|my ?games|steamlibrary|gog ?games|epic ?games|xbox ?games|origin ?games|repacks?|emulation|游戏|单机游戏|学习版|免安装.*)$/i;
 const NOT_A_GAME_EXE = /^(unins|setup|install|vcredist|dxsetup|dotnet|oalinst|crashpad|launcher_installer|dgvoodoocpl|dlss5-feed-host)/i;
 
 // Fixed disks only. A disconnected network drive would block on every read.
@@ -534,6 +534,6 @@ function discover(extraFolders = [], scanDrives = false, excludedRoots = [], fin
 }
 
 module.exports = {
-  discover, folder, dedupe, autoRoots, drives, isInside, filterExcluded,
+  discover, folder, dedupe, autoRoots, drives, isInside, filterExcluded, LIBRARY_NAME,
   steam, linuxSteamRoots, gog, ubisoft, xbox, gamingRootFolder, setRegistryRunner
 };
